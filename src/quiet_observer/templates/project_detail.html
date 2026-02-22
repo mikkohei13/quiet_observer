@@ -24,8 +24,8 @@
     <div class="stat-label">Labeled</div>
   </div>
   <div class="stat-box">
-    <div class="stat-value">{{ classes|length }}</div>
-    <div class="stat-label">Classes</div>
+    <div class="stat-value">{{ unlabeled_count }}</div>
+    <div class="stat-label">Unlabeled</div>
   </div>
   <div class="stat-box">
     <div class="stat-value">{{ review_count }}</div>
@@ -103,14 +103,26 @@
     <h2>Classes</h2>
     <a href="/projects/{{ project.id }}/label" class="btn btn-sm">Manage in Label view</a>
   </div>
-  {% if classes %}
-  <div class="classes-row">
-    {% for cls in classes %}
-    <div class="class-chip" style="border-color: {{ cls.color }}; color: {{ cls.color }}">
-      {{ cls.name }}
-    </div>
-    {% endfor %}
-  </div>
+  {% if class_stats %}
+  <table class="class-stats-table">
+    <thead>
+      <tr>
+        <th>Class</th>
+        <th class="text-right">Annotations</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for cls in class_stats %}
+      <tr>
+        <td>
+          <span class="cls-dot-sm" style="background:{{ cls.color }}"></span>
+          {{ cls.name }}
+        </td>
+        <td class="text-right text-muted">{{ cls.count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
   {% else %}
   <p class="text-muted text-sm">No classes yet. Add them in the <a href="/projects/{{ project.id }}/label">Label view</a>.</p>
   {% endif %}

@@ -73,16 +73,36 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from ..models import Frame, Class, ModelVersion, Deployment, ReviewQueue
+    from ..models import Annotation, Frame, Class, ModelVersion, Deployment, ReviewQueue
     from sqlalchemy import func
 
     frame_count = db.query(func.count(Frame.id)).filter(Frame.project_id == project_id).scalar()
+
+    # Labeled = frames that actually have at least one annotation
     labeled_count = (
-        db.query(func.count(Frame.id))
-        .filter(Frame.project_id == project_id, Frame.is_labeled == True)
+        db.query(func.count(func.distinct(Annotation.frame_id)))
+        .join(Frame, Annotation.frame_id == Frame.id)
+        .filter(Frame.project_id == project_id)
         .scalar()
-    )
+    ) or 0
+    unlabeled_count = frame_count - labeled_count
+
     classes = db.query(Class).filter(Class.project_id == project_id).all()
+
+    # Total annotation instances per class across all frames in this project
+    class_counts_rows = (
+        db.query(Annotation.class_id, func.count(Annotation.id).label("cnt"))
+        .join(Frame, Annotation.frame_id == Frame.id)
+        .filter(Frame.project_id == project_id)
+        .group_by(Annotation.class_id)
+        .all()
+    )
+    count_by_class = {row.class_id: row.cnt for row in class_counts_rows}
+    class_stats = [
+        {"id": c.id, "name": c.name, "color": c.color, "count": count_by_class.get(c.id, 0)}
+        for c in classes
+    ]
+
     review_count = (
         db.query(func.count(ReviewQueue.id))
         .filter(ReviewQueue.project_id == project_id, ReviewQueue.is_labeled == False)
@@ -121,7 +141,9 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             "project": project,
             "frame_count": frame_count,
             "labeled_count": labeled_count,
+            "unlabeled_count": unlabeled_count,
             "classes": classes,
+            "class_stats": class_stats,
             "review_count": review_count,
             "recent_frames": recent_frames,
             "latest_frame": latest_frame,
