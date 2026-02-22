@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}System Status – Quiet Observer{% endblock %}
+{% block content %}
+<h1>System Status</h1>
+
+{% if status_data %}
+<table class="table">
+  <thead>
+    <tr>
+      <th>Project</th>
+      <th>Capture</th>
+      <th>Last Capture</th>
+      <th>Inference</th>
+      <th>Last Inference</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in status_data %}
+    {% set project = item.project %}
+    <tr>
+      <td><a href="/projects/{{ project.id }}">{{ project.name }}</a></td>
+      <td>
+        {% if item.capture_running %}
+        <span class="badge badge-green">running</span>
+        {% else %}
+        <span class="badge">stopped</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if project.last_capture_at %}
+        {{ project.last_capture_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if item.inference_running %}
+        <span class="badge badge-blue">running</span>
+        {% else %}
+        <span class="badge">stopped</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if project.last_inference_at %}
+        {{ project.last_inference_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="text-muted">No projects yet.</p>
+{% endif %}
+<script>setTimeout(() => location.reload(), 15000);</script>
+{% endblock %}

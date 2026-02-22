@@ -6,6 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
+# macOS
+.DS_Store
+
+.claude/
+.cursor/
+
 # Distribution / packaging
 .Python
 build/
@@ -205,3 +211,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Quiet Observer data
+data/

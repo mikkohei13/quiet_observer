@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Label – {{ project.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/projects/{{ project.id }}" class="text-muted">← {{ project.name }}</a>
+    <h1>Labeling</h1>
+  </div>
+</div>
+<div class="card">
+  <h2>All caught up!</h2>
+  <p>No unlabeled frames in the queue.</p>
+  {% if frames %}
+  <p class="text-muted">Browse labeled frames below or go to <a href="/projects/{{ project.id }}/train">Training</a>.</p>
+  <div class="frame-grid">
+    {% for frame in frames %}
+    <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb labeled">
+      <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
+      <span class="frame-badge">✓</span>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

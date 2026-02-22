@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}New Project – Quiet Observer{% endblock %}
+{% block content %}
+<div class="form-page">
+  <h1>New Project</h1>
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/projects" class="form">
+    <div class="form-group">
+      <label for="name">Project name</label>
+      <input type="text" id="name" name="name" required
+             value="{{ form.name if form else '' }}"
+             placeholder="e.g. Backyard Bird Feeder">
+    </div>
+    <div class="form-group">
+      <label for="youtube_url">YouTube live stream URL</label>
+      <input type="url" id="youtube_url" name="youtube_url" required
+             value="{{ form.youtube_url if form else '' }}"
+             placeholder="https://www.youtube.com/watch?v=...">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="capture_interval_seconds">Capture interval (seconds)</label>
+        <input type="number" id="capture_interval_seconds" name="capture_interval_seconds"
+               min="5" max="3600"
+               value="{{ form.capture_interval_seconds if form else 60 }}">
+      </div>
+      <div class="form-group">
+        <label for="inference_interval_seconds">Inference interval (seconds)</label>
+        <input type="number" id="inference_interval_seconds" name="inference_interval_seconds"
+               min="5" max="3600"
+               value="{{ form.inference_interval_seconds if form else 30 }}">
+      </div>
+    </div>
+    <div class="form-actions">
+      <a href="/" class="btn">Cancel</a>
+      <button type="submit" class="btn btn-primary">Create Project</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

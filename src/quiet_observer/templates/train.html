@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Train – {{ project.name }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/projects/{{ project.id }}" class="text-muted">← {{ project.name }}</a>
+    <h1>Training</h1>
+  </div>
+  {% if labeled_count >= 2 %}
+  <form method="post" action="/projects/{{ project.id }}/train/start">
+    <button type="submit" class="btn btn-primary">Start Training</button>
+  </form>
+  {% else %}
+  <button class="btn" disabled title="Need at least 2 labeled frames">Start Training</button>
+  {% endif %}
+</div>
+
+<div class="stats-row">
+  <div class="stat-box">
+    <div class="stat-value">{{ labeled_count }}</div>
+    <div class="stat-label">Labeled frames</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ runs_with_metrics|length }}</div>
+    <div class="stat-label">Training runs</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ mv_with_deploy|length }}</div>
+    <div class="stat-label">Model versions</div>
+  </div>
+</div>
+
+{% if labeled_count < 2 %}
+<div class="alert alert-info">
+  Label at least 2 frames before training. Go to <a href="/projects/{{ project.id }}/label">Labeling</a>.
+</div>
+{% endif %}
+
+<!-- Model Versions -->
+{% if mv_with_deploy %}
+<div class="card">
+  <h2>Model Versions</h2>
+  <table class="table">
+    <thead>
+      <tr><th>ID</th><th>Created</th><th>mAP50</th><th>Status</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      {% for item in mv_with_deploy %}
+      {% set mv = item.mv %}
+      <tr>
+        <td>v{{ mv.id }}</td>
+        <td>{{ mv.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>
+          {% if item.metrics %}
+          {{ item.metrics.get('metrics/mAP50(B)', '—') }}
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if item.is_deployed %}
+          <span class="badge badge-green">deployed</span>
+          {% else %}
+          <span class="badge">not deployed</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if not item.is_deployed %}
+          <form method="post" action="/model_versions/{{ mv.id }}/deploy">
+            <button type="submit" class="btn btn-sm btn-primary">Deploy</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Training Runs -->
+{% if runs_with_metrics %}
+<div class="card">
+  <h2>Training Runs</h2>
+  <table class="table">
+    <thead>
+      <tr><th>ID</th><th>Started</th><th>Status</th><th>Dataset frames</th><th>Log</th></tr>
+    </thead>
+    <tbody>
+      {% for item in runs_with_metrics %}
+      {% set run = item.run %}
+      <tr>
+        <td>#{{ run.id }}</td>
+        <td>{{ run.started_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td>
+          {% if run.status == 'done' %}<span class="badge badge-green">done</span>
+          {% elif run.status == 'running' %}<span class="badge badge-blue">running</span>
+          {% elif run.status == 'failed' %}<span class="badge badge-red">failed</span>
+          {% else %}<span class="badge">{{ run.status }}</span>{% endif %}
+        </td>
+        <td>
+          {% set dv_id = run.dataset_version_id %}
+          {{ run.dataset_version_id }}
+        </td>
+        <td>
+          {% if run.log_path %}
+          <a href="/training_runs/{{ run.id }}/log" class="btn btn-sm">View log</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

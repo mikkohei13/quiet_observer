@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Training Log #{{ run.id }}{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/projects/{{ run.project_id }}/train" class="text-muted">← Training</a>
+    <h1>Training Run #{{ run.id }} — {{ run.status }}</h1>
+  </div>
+</div>
+<div class="card">
+  <pre class="log-output">{{ log_content if log_content else "(no log yet)" }}</pre>
+</div>
+{% if run.status == 'running' %}
+<script>setTimeout(() => location.reload(), 5000);</script>
+{% endif %}
+{% endblock %}

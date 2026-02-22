@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ project.name }} – Quiet Observer{% endblock %}
+{% block content %}
+<div class="form-page">
+  <a href="/projects/{{ project.id }}" class="text-muted">← {{ project.name }}</a>
+  <h1 style="margin-top:0.5rem">Edit Project</h1>
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+  <form method="post" action="/projects/{{ project.id }}/edit" class="form">
+    <div class="form-group">
+      <label for="name">Project name</label>
+      <input type="text" id="name" name="name" required
+             value="{{ form.name if form else project.name }}">
+    </div>
+    <div class="form-group">
+      <label for="youtube_url">YouTube URL</label>
+      <input type="url" id="youtube_url" name="youtube_url" required
+             value="{{ form.youtube_url if form else project.youtube_url }}">
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="capture_interval_seconds">Capture interval (seconds)</label>
+        <input type="number" id="capture_interval_seconds" name="capture_interval_seconds"
+               min="5" max="3600"
+               value="{{ form.capture_interval_seconds if form else project.capture_interval_seconds }}">
+      </div>
+      <div class="form-group">
+        <label for="inference_interval_seconds">Inference interval (seconds)</label>
+        <input type="number" id="inference_interval_seconds" name="inference_interval_seconds"
+               min="5" max="3600"
+               value="{{ form.inference_interval_seconds if form else project.inference_interval_seconds }}">
+      </div>
+    </div>
+    <div class="form-actions">
+      <a href="/projects/{{ project.id }}" class="btn">Cancel</a>
+      <button type="submit" class="btn btn-primary">Save Changes</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
