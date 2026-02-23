@@ -55,10 +55,13 @@ function resizeCanvas() {
   canvas.height = img.naturalHeight || img.clientHeight;
   canvas.style.width = img.clientWidth + 'px';
   canvas.style.height = img.clientHeight + 'px';
+
+  // Lock wrapper to current size so browser resize can't cause bbox misalignment
+  const wrapper = document.getElementById('canvas-wrapper');
+  wrapper.style.width = img.clientWidth + 'px';
+
   drawAll();
 }
-
-window.addEventListener('resize', resizeCanvas);
 
 function markDirty() { dirty = true; }
 function markClean() { dirty = false; }

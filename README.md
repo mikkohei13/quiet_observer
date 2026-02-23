@@ -47,7 +47,7 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 - Smarter active learning: embedding-based novelty sampling, disagreement sampling (champion/challenger)
 
 ### Training
-- Logs show a static plot image even when training is running.
+
 - Labelling should allow setting frames as "not containing classes", then training should use those as well, ignoring only frames that have no labelling data attached.
 - If the system crashes, it should afterwards show the training run as failed. Now it's forever in "running" state.
 - Labelling UI should easily allow A) labelling images that have not been labelled yet, B) re-examining images that have been labelled already.
