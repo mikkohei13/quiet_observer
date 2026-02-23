@@ -74,19 +74,38 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from ..models import Annotation, Detection, Frame, Class, ModelVersion, Deployment, ReviewQueue
+    from ..models import Annotation, Detection, Frame, Class, ModelVersion, Deployment
 
     frame_count = db.query(func.count(Frame.id)).filter(Frame.project_id == project_id).scalar()
 
-    labeled_count = (
+    annotated_count = (
+        db.query(func.count(Frame.id))
+        .filter(Frame.project_id == project_id, Frame.label_status == "annotated")
+        .scalar()
+    ) or 0
+    negative_count = (
+        db.query(func.count(Frame.id))
+        .filter(Frame.project_id == project_id, Frame.label_status == "negative")
+        .scalar()
+    ) or 0
+    unlabeled_sample_count = (
         db.query(func.count(Frame.id))
         .filter(
             Frame.project_id == project_id,
-            Frame.label_status.in_(["annotated", "negative"]),
+            Frame.label_status == "unlabeled",
+            Frame.source == "sampler",
         )
         .scalar()
     ) or 0
-    unlabeled_count = frame_count - labeled_count
+    unlabeled_inference_count = (
+        db.query(func.count(Frame.id))
+        .filter(
+            Frame.project_id == project_id,
+            Frame.label_status == "unlabeled",
+            Frame.source == "inference",
+        )
+        .scalar()
+    ) or 0
 
     classes = db.query(Class).filter(Class.project_id == project_id).all()
 
@@ -104,11 +123,6 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
         for c in classes
     ]
 
-    review_count = (
-        db.query(func.count(ReviewQueue.id))
-        .filter(ReviewQueue.project_id == project_id, ReviewQueue.is_labeled == False)
-        .scalar()
-    )
     recent_frames = (
         db.query(Frame)
         .filter(Frame.project_id == project_id)
@@ -165,18 +179,61 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             "request": request,
             "project": project,
             "frame_count": frame_count,
-            "labeled_count": labeled_count,
-            "unlabeled_count": unlabeled_count,
+            "annotated_count": annotated_count,
+            "negative_count": negative_count,
+            "unlabeled_sample_count": unlabeled_sample_count,
+            "unlabeled_inference_count": unlabeled_inference_count,
             "classes": classes,
             "class_stats": class_stats,
             "class_color_map": class_color_map,
-            "review_count": review_count,
             "recent_frames": recent_frames,
             "latest_frame": latest_frame,
             "deployed_model": deployed_model,
             "recent_inferred_frames": recent_inferred_frames,
             "sampling_running": sampling_running,
             "inference_running": inference_running,
+        },
+    )
+
+
+@router.get("/projects/{project_id}/frames", response_class=HTMLResponse)
+async def frames_browse(
+    request: Request, project_id: int, filter: str = "all", db: Session = Depends(get_db)
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    from ..models import Frame
+
+    query = db.query(Frame).filter(Frame.project_id == project_id)
+
+    filter_labels = {
+        "all": "All Frames",
+        "annotated": "Annotated",
+        "negative": "Negative",
+        "unlabeled_samples": "Unlabeled samples",
+        "unlabeled_inference": "Unlabeled inference",
+    }
+
+    if filter == "annotated":
+        query = query.filter(Frame.label_status == "annotated")
+    elif filter == "negative":
+        query = query.filter(Frame.label_status == "negative")
+    elif filter == "unlabeled_samples":
+        query = query.filter(Frame.label_status == "unlabeled", Frame.source == "sampler")
+    elif filter == "unlabeled_inference":
+        query = query.filter(Frame.label_status == "unlabeled", Frame.source == "inference")
+
+    frames = query.order_by(Frame.captured_at.desc()).all()
+
+    return templates.TemplateResponse(
+        "frames_browse.html",
+        {
+            "request": request,
+            "project": project,
+            "frames": frames,
+            "filter_label": filter_labels.get(filter, "Frames"),
         },
     )
 
@@ -197,11 +254,24 @@ async def edit_project(
     youtube_url: str = Form(...),
     sample_interval_seconds: int = Form(...),
     inference_interval_seconds: int = Form(...),
+    auto_sample_interval_seconds: int = Form(600),
+    low_confidence_threshold: float = Form(0.3),
+    high_confidence_threshold: float = Form(0.7),
     db: Session = Depends(get_db),
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    form_data = {
+        "name": name,
+        "youtube_url": youtube_url,
+        "sample_interval_seconds": sample_interval_seconds,
+        "inference_interval_seconds": inference_interval_seconds,
+        "auto_sample_interval_seconds": auto_sample_interval_seconds,
+        "low_confidence_threshold": low_confidence_threshold,
+        "high_confidence_threshold": high_confidence_threshold,
+    }
 
     if not validate_youtube_url(youtube_url):
         return templates.TemplateResponse(
@@ -210,12 +280,18 @@ async def edit_project(
                 "request": request,
                 "project": project,
                 "error": "Invalid YouTube URL. Must contain youtube.com or youtu.be",
-                "form": {
-                    "name": name,
-                    "youtube_url": youtube_url,
-                    "sample_interval_seconds": sample_interval_seconds,
-                    "inference_interval_seconds": inference_interval_seconds,
-                },
+                "form": form_data,
+            },
+        )
+
+    if low_confidence_threshold >= high_confidence_threshold:
+        return templates.TemplateResponse(
+            "project_edit.html",
+            {
+                "request": request,
+                "project": project,
+                "error": "Low confidence threshold must be less than high confidence threshold.",
+                "form": form_data,
             },
         )
 
@@ -223,6 +299,9 @@ async def edit_project(
     project.youtube_url = youtube_url
     project.sample_interval_seconds = sample_interval_seconds
     project.inference_interval_seconds = inference_interval_seconds
+    project.auto_sample_interval_seconds = auto_sample_interval_seconds
+    project.low_confidence_threshold = low_confidence_threshold
+    project.high_confidence_threshold = high_confidence_threshold
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)

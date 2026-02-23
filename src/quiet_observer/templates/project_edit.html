@@ -32,6 +32,31 @@
                value="{{ form.inference_interval_seconds if form else project.inference_interval_seconds }}">
       </div>
     </div>
+    <h3 style="margin-top:1.5rem">Inference sampling thresholds</h3>
+    <p class="text-muted" style="margin-bottom:1rem;font-size:0.9rem">
+      During inference, frames with any detection confidence between low and high thresholds
+      are sampled for labeling. Detections below the low threshold are treated as noise.
+    </p>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="auto_sample_interval_seconds">Auto-sample interval (seconds)</label>
+        <input type="number" id="auto_sample_interval_seconds" name="auto_sample_interval_seconds"
+               min="10" max="86400"
+               value="{{ form.auto_sample_interval_seconds if form else project.auto_sample_interval_seconds or 600 }}">
+      </div>
+      <div class="form-group">
+        <label for="low_confidence_threshold">Low confidence threshold</label>
+        <input type="number" id="low_confidence_threshold" name="low_confidence_threshold"
+               min="0" max="1" step="0.05"
+               value="{{ form.low_confidence_threshold if form else project.low_confidence_threshold if project.low_confidence_threshold is not none else 0.3 }}">
+      </div>
+      <div class="form-group">
+        <label for="high_confidence_threshold">High confidence threshold</label>
+        <input type="number" id="high_confidence_threshold" name="high_confidence_threshold"
+               min="0" max="1" step="0.05"
+               value="{{ form.high_confidence_threshold if form else project.high_confidence_threshold if project.high_confidence_threshold is not none else 0.7 }}">
+      </div>
+    </div>
     <div class="form-actions">
       <a href="/projects/{{ project.id }}" class="btn">Cancel</a>
       <button type="submit" class="btn btn-primary">Save Changes</button>

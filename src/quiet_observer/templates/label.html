@@ -72,11 +72,11 @@
     {% if from_queue %}<span class="badge badge-orange">From Review Queue</span>{% endif %}
   </div>
   <div class="header-actions">
-    {% if prev_frame %}
-    <a href="/projects/{{ project.id }}/label/{{ prev_frame.id }}" class="btn btn-sm">← Newer</a>
-    {% endif %}
     {% if next_frame %}
-    <a href="/projects/{{ project.id }}/label/{{ next_frame.id }}" class="btn btn-sm">Older →</a>
+    <a href="/projects/{{ project.id }}/label/{{ next_frame.id }}" class="btn btn-sm">← Newer</a>
+    {% endif %}
+    {% if prev_frame %}
+    <a href="/projects/{{ project.id }}/label/{{ prev_frame.id }}" class="btn btn-sm">Older →</a>
     {% endif %}
   </div>
 </div>
@@ -123,7 +123,7 @@
     </button>
     {% if next_frame %}
     <button class="btn btn-sm" onclick="saveAndNext()" style="width:100%; margin-top:0.5rem">
-      Save & Older →
+      ← Save & Newer
     </button>
     {% endif %}
   </div>

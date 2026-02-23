@@ -9,6 +9,7 @@ from pathlib import Path
 from ..config import (
     AUTO_SAMPLE_INTERVAL_SECONDS,
     DATA_DIR,
+    HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
     LOW_CONFIDENCE_SAMPLE_THRESHOLD,
     YOLO_INFERENCE_CONF,
 )
@@ -76,19 +77,25 @@ def should_sample_frame(
     detections: list[dict],
     last_sampled_at: float,
     now: float,
+    auto_sample_interval: float = AUTO_SAMPLE_INTERVAL_SECONDS,
+    low_threshold: float = LOW_CONFIDENCE_SAMPLE_THRESHOLD,
+    high_threshold: float = HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
 ) -> tuple[bool, str]:
     """Decide whether to sample this frame for the labeling pipeline.
 
     A frame is sampled when:
     - Enough time has elapsed since the last sample (time-based), or
-    - Any detection has confidence below the threshold (uncertain detection).
+    - Any detection has confidence in [low_threshold, high_threshold] — the
+      uncertain range worth human review.  Detections below low_threshold are
+      treated as noise and do NOT trigger sampling.
     """
     if detections:
-        min_conf = min(d["confidence"] for d in detections)
-        if min_conf < LOW_CONFIDENCE_SAMPLE_THRESHOLD:
-            return True, f"low_confidence:{min_conf:.2f}"
+        for d in detections:
+            conf = d["confidence"]
+            if low_threshold <= conf <= high_threshold:
+                return True, f"uncertain_confidence:{conf:.2f}"
 
-    if now - last_sampled_at >= AUTO_SAMPLE_INTERVAL_SECONDS:
+    if now - last_sampled_at >= auto_sample_interval:
         return True, "auto_sample"
 
     return False, ""
@@ -246,6 +253,9 @@ async def inference_loop(project_id: int) -> None:
 
                                     should_sample, reason = should_sample_frame(
                                         detections, _last_sampled_at, time.monotonic(),
+                                        auto_sample_interval=project.auto_sample_interval_seconds or AUTO_SAMPLE_INTERVAL_SECONDS,
+                                        low_threshold=project.low_confidence_threshold if project.low_confidence_threshold is not None else LOW_CONFIDENCE_SAMPLE_THRESHOLD,
+                                        high_threshold=project.high_confidence_threshold if project.high_confidence_threshold is not None else HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
                                     )
                                     if should_sample:
                                         db.add(ReviewQueue(

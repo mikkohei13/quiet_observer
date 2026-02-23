@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ filter_label }} – {{ project.name }} – Quiet Observer{% endblock %}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ filter_label }}</h1>
+    <p class="text-muted">{{ project.name }} · {{ frames | length }} frame{{ 's' if frames | length != 1 else '' }}</p>
+  </div>
+  <a href="/projects/{{ project.id }}" class="btn">← Back to project</a>
+</div>
+
+{% if frames %}
+<div class="frame-grid">
+  {% for frame in frames %}
+  <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb {% if frame.label_status in ['annotated', 'negative'] %}labeled{% endif %}">
+    <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
+    {% if frame.label_status == 'annotated' %}<span class="frame-badge">✓</span>{% endif %}
+    {% if frame.label_status == 'negative' %}<span class="frame-badge" style="background:#f59e0b">∅</span>{% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <p class="text-muted">No frames in this category yet.</p>
+</div>
+{% endif %}
+{% endblock %}

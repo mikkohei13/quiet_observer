@@ -15,22 +15,26 @@
 </div>
 
 <div class="stats-row">
-  <div class="stat-box">
+  <a href="/projects/{{ project.id }}/frames?filter=all" class="stat-box stat-box-link">
     <div class="stat-value">{{ frame_count }}</div>
     <div class="stat-label">Frames</div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-value">{{ labeled_count }}</div>
-    <div class="stat-label">Labeled</div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-value">{{ unlabeled_count }}</div>
-    <div class="stat-label">Unlabeled</div>
-  </div>
-  <div class="stat-box">
-    <div class="stat-value">{{ review_count }}</div>
-    <div class="stat-label">In Review</div>
-  </div>
+  </a>
+  <a href="/projects/{{ project.id }}/frames?filter=annotated" class="stat-box stat-box-link">
+    <div class="stat-value">{{ annotated_count }}</div>
+    <div class="stat-label">Annotated</div>
+  </a>
+  <a href="/projects/{{ project.id }}/frames?filter=negative" class="stat-box stat-box-link">
+    <div class="stat-value">{{ negative_count }}</div>
+    <div class="stat-label">Negative</div>
+  </a>
+  <a href="/projects/{{ project.id }}/frames?filter=unlabeled_samples" class="stat-box stat-box-link">
+    <div class="stat-value">{{ unlabeled_sample_count }}</div>
+    <div class="stat-label">Unlabeled samples</div>
+  </a>
+  <a href="/projects/{{ project.id }}/frames?filter=unlabeled_inference" class="stat-box stat-box-link">
+    <div class="stat-value">{{ unlabeled_inference_count }}</div>
+    <div class="stat-label">Unlabeled inference</div>
+  </a>
 </div>
 
 <div class="two-col">

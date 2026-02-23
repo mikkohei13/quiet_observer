@@ -32,7 +32,7 @@ src/quiet_observer/
 │   └── inference.py     # inference_loop(): capture frame → run YOLO → Detection rows
 ├── ml/
 │   └── trainer.py       # Dataset export (YOLO format), model.train(), ModelVersion creation
-└── templates/           # 11 Jinja2 templates (base, projects, detail, label, train, monitor, etc.)
+└── templates/           # 12 Jinja2 templates (base, projects, detail, frames_browse, label, train, monitor, etc.)
 
 static/
 ├── style.css            # Full app stylesheet
@@ -64,7 +64,8 @@ Key columns worth knowing:
 - `Project.last_inference_at` — updated per frame during inference
 - `Project.last_inferred_frame_id` — tracks the latest frame processed by inference (including zero-detection frames); used by `/inference/latest` and `/inference/recent` endpoints; cleared on inference start so the UI resets
 - `Detection.detected_at` — explicit `datetime.utcnow()`
-- `ReviewQueue.reason` — `"auto_sample"` or `"low_confidence:0.25"` etc.
+- `Project.auto_sample_interval_seconds` / `low_confidence_threshold` / `high_confidence_threshold` — per-project inference sampling settings (defaults 600 / 0.3 / 0.7), editable via the project edit form
+- `ReviewQueue.reason` — `"auto_sample"` or `"uncertain_confidence:0.45"` etc.
 - `InferenceSession.stopped_at` — `None` means running or crashed; orphans closed on next start
 - `Frame.file_path` — relative to `DATA_DIR`
 - `Frame.source` — `"sampler"` (from sampling worker) or `"inference"` (from inference worker)
@@ -87,8 +88,9 @@ Key columns worth knowing:
 4. Run model via `run_in_executor` (thread pool) with `conf=YOLO_INFERENCE_CONF` (default 0.1)
 5. Write `Detection` rows, update `project.last_inferred_frame_id`
 6. Sample frame for labeling (add to `ReviewQueue`) if either condition is met:
-   - Any detection confidence < `LOW_CONFIDENCE_SAMPLE_THRESHOLD` (default 0.3)
-   - Time since last sample ≥ `AUTO_SAMPLE_INTERVAL_SECONDS` (default 600)
+   - Any detection confidence in [low_threshold, high_threshold] — the uncertain range worth human review (detections below low_threshold are treated as noise)
+   - Time since last sample ≥ `auto_sample_interval_seconds`
+   - Thresholds are per-project (configurable in project edit form), with config.py defaults as fallback
 7. Sleep `inference_interval_seconds`
 
 Sampling and inference are independent — either can run without the other. Both create `Frame` rows from the YouTube stream. The `Frame.source` column distinguishes their origin.
@@ -123,13 +125,14 @@ Fine-tuning defaults (in `config_json`): `epochs=100`, `freeze=10` (backbone lay
 
 The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object for consistent pill/box coloring.
 
-## Route map (24 routes)
+## Route map (25 routes)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | Project list |
 | GET/POST | `/projects/new`, `/projects` | Create project |
 | GET | `/projects/{id}` | Project dashboard |
+| GET | `/projects/{id}/frames?filter=` | Browse frames by category (all, annotated, negative, unlabeled_samples, unlabeled_inference) |
 | GET/POST | `/projects/{id}/edit` | Edit project |
 | POST | `/projects/{id}/sampling/start\|stop` | Control sampling worker |
 | POST | `/projects/{id}/inference/start\|stop` | Control inference worker |

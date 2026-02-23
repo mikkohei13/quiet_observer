@@ -65,6 +65,19 @@ def init_db():
         except Exception:
             conn.rollback()
 
+        for col, default in [
+            ("auto_sample_interval_seconds", "600"),
+            ("low_confidence_threshold", "0.3"),
+            ("high_confidence_threshold", "0.7"),
+        ]:
+            try:
+                conn.execute(text(
+                    f"ALTER TABLE projects ADD COLUMN {col} REAL DEFAULT {default}"
+                ))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
         # Migrate is_labeled boolean to label_status string
         try:
             conn.execute(text(

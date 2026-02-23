@@ -9,9 +9,6 @@ DATABASE_URL = f"sqlite:///{DATA_DIR}/quiet_observer.db"
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-# Uncertainty threshold for review queue
-UNCERTAINTY_THRESHOLD = 0.5
-
 # YOLO base model for fine-tuning
 YOLO_BASE_MODEL = "yolo11n.pt"
 
@@ -21,5 +18,7 @@ YOLO_INFERENCE_CONF = 0.1
 # During inference, sample a frame for labeling every N seconds
 AUTO_SAMPLE_INTERVAL_SECONDS = 600
 
-# During inference, sample a frame when any detection confidence is below this
+# During inference, sample a frame when any detection confidence is within
+# [LOW, HIGH] range. Detections below LOW are treated as noise and ignored.
 LOW_CONFIDENCE_SAMPLE_THRESHOLD = 0.3
+HIGH_CONFIDENCE_SAMPLE_THRESHOLD = 0.7

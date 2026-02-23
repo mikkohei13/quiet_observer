@@ -20,6 +20,9 @@ class Project(Base):
     last_sample_at = Column(DateTime, nullable=True)
     last_inference_at = Column(DateTime, nullable=True)
     last_inferred_frame_id = Column(Integer, nullable=True)
+    auto_sample_interval_seconds = Column(Integer, default=600)
+    low_confidence_threshold = Column(Float, default=0.3)
+    high_confidence_threshold = Column(Float, default=0.7)
 
 
 class Frame(Base):
