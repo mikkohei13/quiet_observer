@@ -21,10 +21,10 @@
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label for="capture_interval_seconds">Capture interval (seconds)</label>
-        <input type="number" id="capture_interval_seconds" name="capture_interval_seconds"
+        <label for="sample_interval_seconds">Sample interval (seconds)</label>
+        <input type="number" id="sample_interval_seconds" name="sample_interval_seconds"
                min="5" max="3600"
-               value="{{ form.capture_interval_seconds if form else 60 }}">
+               value="{{ form.sample_interval_seconds if form else 60 }}">
       </div>
       <div class="form-group">
         <label for="inference_interval_seconds">Inference interval (seconds)</label>

@@ -2,6 +2,8 @@
 
 FastAPI server-side rendered app for continuous object detection on YouTube live streams. Captures frames via yt-dlp/ffmpeg, runs YOLO inference, and provides a labeling UI to fine-tune custom models.
 
+**Terminology**: "capture" means the generic act of grabbing a frame from a video stream (yt-dlp + ffmpeg). "Sample" means storing a captured frame for the labeling/training pipeline. The sampling worker and the inference worker both capture frames, but decide independently which ones to keep as samples.
+
 ## Stack
 
 - **Server**: FastAPI + Uvicorn, Jinja2 templates, no frontend framework
@@ -19,14 +21,14 @@ src/quiet_observer/
 ├── database.py          # Engine, SessionLocal, get_db() dependency, init_db()
 ├── models.py            # 12 SQLAlchemy models, no relationship() declarations
 ├── routers/
-│   ├── projects.py      # Project CRUD, capture/inference start/stop, live inference JSON APIs
+│   ├── projects.py      # Project CRUD, sampling/inference start/stop, live inference JSON APIs
 │   ├── frames.py        # GET /frames/{id}/image — serves JPEGs from disk
 │   ├── annotations.py   # Labeling UI, annotation save/replace, class CRUD
 │   ├── training.py      # Training dashboard, start training, deploy model
 │   └── monitoring.py    # Monitor dashboard, system status page
 ├── workers/
 │   ├── manager.py       # WorkerManager singleton — start/stop/track asyncio tasks per project
-│   ├── capture.py       # capture_loop(): yt-dlp → ffmpeg → save frame → Frame row
+│   ├── capture.py       # capture utilities (yt-dlp, ffmpeg) + sample_loop()
 │   └── inference.py     # inference_loop(): capture frame → run YOLO → Detection rows
 ├── ml/
 │   └── trainer.py       # Dataset export (YOLO format), model.train(), ModelVersion creation
@@ -36,7 +38,7 @@ static/
 ├── style.css            # Full app stylesheet
 └── label.js             # Canvas-based bounding box annotation tool
 
-data/                    # Runtime — DB, captured frames, training runs (gitignored)
+data/                    # Runtime — DB, sampled/inferred frames, training runs (gitignored)
 ```
 
 ## Data model
@@ -46,7 +48,7 @@ Project ──< Frame ──< Annotation >── Class
    │           │
    │           ├──< Detection (from inference)
    │           │
-   │           └──< ReviewQueue (uncertain/no-detection frames)
+   │           └──< ReviewQueue (sampled frames for labeling)
    │
    ├──< DatasetVersion ──< DatasetVersionFrame >── Frame
    │
@@ -58,42 +60,48 @@ Project ──< Frame ──< Annotation >── Class
 No ORM relationships are declared. All joins are explicit `db.query().filter()` calls. Bounding boxes (Annotation, Detection) use normalized YOLO format: `x_center, y_center, width, height` in 0.0–1.0 range.
 
 Key columns worth knowing:
-- `Project.capture_active` / `inference_active` — persisted intended state (not used for auto-restart)
+- `Project.sampling_active` / `inference_active` — persisted intended state (not used for auto-restart)
 - `Project.last_inference_at` — updated per frame during inference
 - `Project.last_inferred_frame_id` — tracks the latest frame processed by inference (including zero-detection frames); used by `/inference/latest` and `/inference/recent` endpoints; cleared on inference start so the UI resets
 - `Detection.detected_at` — explicit `datetime.utcnow()`
-- `ReviewQueue.reason` — `"no_detection"` or `"low_confidence:0.35"` etc.
+- `ReviewQueue.reason` — `"auto_sample"` or `"low_confidence:0.25"` etc.
 - `InferenceSession.stopped_at` — `None` means running or crashed; orphans closed on next start
 - `Frame.file_path` — relative to `DATA_DIR`
+- `Frame.source` — `"sampler"` (from sampling worker) or `"inference"` (from inference worker)
+- `Frame.label_status` — `"unlabeled"` (default), `"annotated"` (has bounding boxes), or `"negative"` (explicitly marked as containing no objects; YOLO background sample). Both `"annotated"` and `"negative"` count as labeled for project stats and training. Migrated from the earlier `is_labeled` boolean via `init_db()`.
 
 ## Worker system
 
-`WorkerManager` (singleton at module level) holds `dict[int, asyncio.Task]` for capture and inference tasks, keyed by project_id.
+`WorkerManager` (singleton at module level) holds `dict[int, asyncio.Task]` for sampling and inference tasks, keyed by project_id.
 
-**Capture loop** (`capture.py`) — for collecting frames to label and train on:
+**Sampling loop** (`capture.py: sample_loop()`) — samples frames at a fixed interval for labeling and training:
 1. Resolve YouTube stream URL via `yt-dlp --get-url`
-2. Grab one frame via `ffmpeg -i {url} -frames:v 1`
+2. Capture one frame via `ffmpeg -i {url} -frames:v 1`
 3. Save to `data/projects/{id}/frames/{timestamp}.jpg`
-4. Insert `Frame` row, sleep `capture_interval_seconds`
+4. Insert `Frame` row (`source="sampler"`), sleep `sample_interval_seconds`
 
-**Inference loop** (`inference.py`) — for running detections on a live stream:
+**Inference loop** (`inference.py`) — runs detections on a live stream and selectively samples frames:
 1. Load deployed YOLO model (cached, reloaded on version change)
-2. Capture a frame from the YouTube stream (same yt-dlp/ffmpeg mechanism as capture; stream URL cached, re-resolved on failure)
-3. Save frame to disk, insert `Frame` row
+2. Capture a frame from the YouTube stream (same yt-dlp/ffmpeg mechanism; stream URL cached, re-resolved on failure)
+3. Save frame to disk, insert `Frame` row (`source="inference"`)
 4. Run model via `run_in_executor` (thread pool) with `conf=YOLO_INFERENCE_CONF` (default 0.1)
 5. Write `Detection` rows, update `project.last_inferred_frame_id`
-6. Add to `ReviewQueue` if no detections or low confidence (< `UNCERTAINTY_THRESHOLD=0.5`)
+6. Sample frame for labeling (add to `ReviewQueue`) if either condition is met:
+   - Any detection confidence < `LOW_CONFIDENCE_SAMPLE_THRESHOLD` (default 0.3)
+   - Time since last sample ≥ `AUTO_SAMPLE_INTERVAL_SECONDS` (default 600)
 7. Sleep `inference_interval_seconds`
 
-Capture and inference are independent — either can run without the other. Both create `Frame` rows from the YouTube stream.
+Sampling and inference are independent — either can run without the other. Both create `Frame` rows from the YouTube stream. The `Frame.source` column distinguishes their origin.
+
+The labeling UI prioritizes ReviewQueue items first, then falls back to unlabeled `source="sampler"` frames. Inference frames only reach the labeling pipeline when explicitly sampled via the ReviewQueue.
 
 Workers are fire-and-forget asyncio tasks. Stopped via `task.cancel()`. All stopped on app shutdown via lifespan.
 
 ## Training pipeline
 
 Triggered from `/projects/{id}/train/start`:
-1. Snapshot: copies current labeled frame IDs into a `DatasetVersion`
-2. Export: writes YOLO-format dataset (images + label .txt files, randomized 80/20 split)
+1. Snapshot: copies current labeled frame IDs (annotated + negative) into a `DatasetVersion`
+2. Export: writes YOLO-format dataset (images + label .txt files, randomized 80/20 split). Negative frames get empty `.txt` label files so YOLO treats them as background samples.
 3. Train: `YOLO(base_model).train(...)` in thread pool, logs to `data/projects/{id}/runs/{run_id}/train.log`
 4. On success: create `ModelVersion` with weights path + metrics JSON
 5. User deploys via POST to `/model_versions/{id}/deploy` (deactivates previous)
@@ -115,7 +123,7 @@ Fine-tuning defaults (in `config_json`): `epochs=100`, `freeze=10` (backbone lay
 
 The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object for consistent pill/box coloring.
 
-## Route map (23 routes)
+## Route map (24 routes)
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -123,13 +131,14 @@ The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object f
 | GET/POST | `/projects/new`, `/projects` | Create project |
 | GET | `/projects/{id}` | Project dashboard |
 | GET/POST | `/projects/{id}/edit` | Edit project |
-| POST | `/projects/{id}/capture/start\|stop` | Control capture worker |
+| POST | `/projects/{id}/sampling/start\|stop` | Control sampling worker |
 | POST | `/projects/{id}/inference/start\|stop` | Control inference worker |
 | GET | `/projects/{id}/inference/latest` | JSON: latest inferred frame + detections |
 | GET | `/projects/{id}/inference/recent` | JSON: last 10 inferred frames |
 | GET | `/frames/{id}/image` | Serve frame JPEG |
 | GET | `/projects/{id}/label[/{frame_id}]` | Annotation UI |
 | POST | `/projects/{id}/frames/{frame_id}/annotations` | Save annotations (JSON) |
+| POST | `/projects/{id}/frames/{frame_id}/mark_negative` | Mark frame as negative (no objects) |
 | POST | `/projects/{id}/classes` | Create class |
 | POST | `/classes/{id}/rename\|delete` | Rename/delete class |
 | GET | `/projects/{id}/train` | Training dashboard |

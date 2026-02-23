@@ -47,7 +47,7 @@ async def train_page(request: Request, project_id: int, db: Session = Depends(ge
 
     labeled_count = (
         db.query(Frame)
-        .filter(Frame.project_id == project_id, Frame.is_labeled == True)
+        .filter(Frame.project_id == project_id, Frame.label_status.in_(["annotated", "negative"]))
         .count()
     )
 
@@ -104,7 +104,7 @@ async def start_training(project_id: int, db: Session = Depends(get_db)):
 
     labeled_frames = (
         db.query(Frame)
-        .filter(Frame.project_id == project_id, Frame.is_labeled == True)
+        .filter(Frame.project_id == project_id, Frame.label_status.in_(["annotated", "negative"]))
         .all()
     )
     if not labeled_frames:

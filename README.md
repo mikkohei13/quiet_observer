@@ -45,6 +45,7 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 - Better dataset management: add train/val split control and “hard negatives”
 - Model export: ONNX export for faster CPU inference if needed
 - Smarter active learning: embedding-based novelty sampling, disagreement sampling (champion/challenger)
+- Clean database.py by removing unneeded migrations.
 
 ### Training
 

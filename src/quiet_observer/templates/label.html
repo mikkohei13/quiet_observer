@@ -73,10 +73,10 @@
   </div>
   <div class="header-actions">
     {% if prev_frame %}
-    <a href="/projects/{{ project.id }}/label/{{ prev_frame.id }}" class="btn btn-sm">← Prev</a>
+    <a href="/projects/{{ project.id }}/label/{{ prev_frame.id }}" class="btn btn-sm">← Newer</a>
     {% endif %}
     {% if next_frame %}
-    <a href="/projects/{{ project.id }}/label/{{ next_frame.id }}" class="btn btn-sm">Next →</a>
+    <a href="/projects/{{ project.id }}/label/{{ next_frame.id }}" class="btn btn-sm">Older →</a>
     {% endif %}
   </div>
 </div>
@@ -109,15 +109,21 @@
     </div>
 
     <hr>
+    <div id="negative-banner" style="display:none; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; padding:0.5rem; margin-top:0.5rem; text-align:center; font-size:0.85rem; color:#92400e">
+      Marked as <strong>No Objects</strong>
+    </div>
     <button class="btn btn-primary" onclick="saveAnnotations()" style="width:100%; margin-top:0.5rem">
       Save
+    </button>
+    <button class="btn" onclick="markAsNegative()" id="mark-negative-btn" style="width:100%; margin-top:0.5rem">
+      No Objects
     </button>
     <button class="btn" onclick="clearAll()" style="width:100%; margin-top:0.5rem">
       Clear all
     </button>
     {% if next_frame %}
     <button class="btn btn-sm" onclick="saveAndNext()" style="width:100%; margin-top:0.5rem">
-      Save & Next →
+      Save & Older →
     </button>
     {% endif %}
   </div>
@@ -130,6 +136,7 @@
   const NEXT_FRAME_ID = {% if next_frame %}{{ next_frame.id }}{% else %}null{% endif %};
   const INITIAL_ANNOTATIONS = {{ annotations_json | safe }};
   const INITIAL_CLASSES = {{ classes_json | safe }};
+  const LABEL_STATUS = "{{ frame.label_status or 'unlabeled' }}";
 </script>
 <script src="/static/label.js"></script>
 {% endblock %}

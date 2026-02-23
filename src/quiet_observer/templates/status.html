@@ -8,8 +8,8 @@
   <thead>
     <tr>
       <th>Project</th>
-      <th>Capture</th>
-      <th>Last Capture</th>
+      <th>Sampling</th>
+      <th>Last Sample</th>
       <th>Inference</th>
       <th>Last Inference</th>
     </tr>
@@ -20,15 +20,15 @@
     <tr>
       <td><a href="/projects/{{ project.id }}">{{ project.name }}</a></td>
       <td>
-        {% if item.capture_running %}
+        {% if item.sampling_running %}
         <span class="badge badge-green">running</span>
         {% else %}
         <span class="badge">stopped</span>
         {% endif %}
       </td>
       <td>
-        {% if project.last_capture_at %}
-        {{ project.last_capture_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        {% if project.last_sample_at %}
+        {{ project.last_sample_at.strftime('%Y-%m-%d %H:%M:%S') }}
         {% else %}—{% endif %}
       </td>
       <td>

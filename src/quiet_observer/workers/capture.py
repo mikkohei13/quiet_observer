@@ -1,4 +1,4 @@
-"""Frame capture worker: resolves YouTube stream and grabs frames at a fixed interval."""
+"""Frame sampling worker: captures frames from a YouTube stream and stores them for labeling."""
 import asyncio
 import logging
 import subprocess
@@ -76,19 +76,19 @@ def get_image_dimensions(path: Path) -> tuple[int, int] | tuple[None, None]:
         return None, None
 
 
-async def capture_loop(project_id: int) -> None:
-    """Main capture loop. Runs until cancelled."""
-    logger.info("Capture loop starting for project %d", project_id)
+async def sample_loop(project_id: int) -> None:
+    """Main sampling loop. Captures and stores frames for labeling. Runs until cancelled."""
+    logger.info("Sample loop starting for project %d", project_id)
 
     while True:
         db = SessionLocal()
         try:
             project = db.query(Project).filter(Project.id == project_id).first()
             if not project:
-                logger.error("Project %d not found, stopping capture", project_id)
+                logger.error("Project %d not found, stopping sampling", project_id)
                 return
 
-            interval = project.capture_interval_seconds
+            interval = project.sample_interval_seconds
             youtube_url = project.youtube_url
 
             logger.info("Resolving stream URL for project %d...", project_id)
@@ -110,25 +110,25 @@ async def capture_loop(project_id: int) -> None:
                         file_path=str(rel_path),
                         width=width,
                         height=height,
-                        source="capture",
+                        source="sampler",
                     )
                     db.add(frame)
-                    project.last_capture_at = timestamp
+                    project.last_sample_at = timestamp
                     db.commit()
-                    logger.info("Captured frame for project %d: %s", project_id, rel_path)
+                    logger.info("Sampled frame for project %d: %s", project_id, rel_path)
                 else:
                     logger.warning("Frame capture failed for project %d", project_id)
 
         except asyncio.CancelledError:
-            logger.info("Capture loop cancelled for project %d", project_id)
+            logger.info("Sample loop cancelled for project %d", project_id)
             raise
         except Exception as e:
-            logger.exception("Error in capture loop for project %d: %s", project_id, e)
+            logger.exception("Error in sample loop for project %d: %s", project_id, e)
         finally:
             db.close()
 
         try:
             await asyncio.sleep(interval)
         except asyncio.CancelledError:
-            logger.info("Capture loop cancelled during sleep for project %d", project_id)
+            logger.info("Sample loop cancelled during sleep for project %d", project_id)
             raise

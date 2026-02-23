@@ -139,7 +139,7 @@ async def inference_loop(project_id: int) -> None:
     """Main inference loop. Runs until cancelled.
 
     Each iteration captures a frame from the YouTube stream and runs YOLO on it.
-    Independent of the capture worker.
+    Independent of the sampling worker.
     """
     logger.info("Inference loop starting for project %d", project_id)
 

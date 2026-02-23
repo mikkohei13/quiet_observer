@@ -164,7 +164,7 @@ async def status_page(request: Request, db: Session = Depends(get_db)):
     for project in projects:
         status_data.append({
             "project": project,
-            "capture_running": worker_manager.is_capture_running(project.id),
+            "sampling_running": worker_manager.is_sampling_running(project.id),
             "inference_running": worker_manager.is_inference_running(project.id),
         })
 

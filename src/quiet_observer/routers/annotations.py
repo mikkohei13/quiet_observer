@@ -35,13 +35,13 @@ async def label_index(request: Request, project_id: int, db: Session = Depends(g
             f"/projects/{project_id}/label/{review.frame_id}?from_queue=1", status_code=303
         )
 
-    # Otherwise, first unlabeled capture frame (inference frames come through the queue)
+    # Otherwise, first unlabeled sampler frame (inference frames come through the queue)
     frame = (
         db.query(Frame)
         .filter(
             Frame.project_id == project_id,
-            Frame.is_labeled == False,
-            Frame.source == "capture",
+            Frame.label_status == "unlabeled",
+            Frame.source == "sampler",
         )
         .order_by(Frame.captured_at.asc())
         .first()
@@ -164,7 +164,7 @@ async def save_annotations(
         )
         db.add(db_ann)
 
-    frame.is_labeled = len(annotations) > 0
+    frame.label_status = "annotated" if len(annotations) > 0 else "unlabeled"
 
     # Mark as labeled in review queue if applicable
     review = db.query(ReviewQueue).filter(
@@ -225,4 +225,29 @@ async def delete_class(class_id: int, db: Session = Depends(get_db)):
     db.delete(cls)
     db.commit()
 
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/projects/{project_id}/frames/{frame_id}/mark_negative")
+async def mark_negative(
+    project_id: int,
+    frame_id: int,
+    db: Session = Depends(get_db),
+):
+    """Mark a frame as containing no objects (negative / background sample)."""
+    frame = db.query(Frame).filter(Frame.id == frame_id, Frame.project_id == project_id).first()
+    if not frame:
+        raise HTTPException(status_code=404, detail="Frame not found")
+
+    db.query(Annotation).filter(Annotation.frame_id == frame_id).delete()
+    frame.label_status = "negative"
+
+    review = db.query(ReviewQueue).filter(
+        ReviewQueue.frame_id == frame_id,
+        ReviewQueue.project_id == project_id,
+    ).first()
+    if review:
+        review.is_labeled = True
+
+    db.commit()
     return JSONResponse({"status": "ok"})

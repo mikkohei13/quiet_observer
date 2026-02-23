@@ -36,7 +36,7 @@ async def create_project(
     request: Request,
     name: str = Form(...),
     youtube_url: str = Form(...),
-    capture_interval_seconds: int = Form(60),
+    sample_interval_seconds: int = Form(60),
     inference_interval_seconds: int = Form(30),
     db: Session = Depends(get_db),
 ):
@@ -49,7 +49,7 @@ async def create_project(
                 "form": {
                     "name": name,
                     "youtube_url": youtube_url,
-                    "capture_interval_seconds": capture_interval_seconds,
+                    "sample_interval_seconds": sample_interval_seconds,
                     "inference_interval_seconds": inference_interval_seconds,
                 },
             },
@@ -58,7 +58,7 @@ async def create_project(
     project = Project(
         name=name,
         youtube_url=youtube_url,
-        capture_interval_seconds=capture_interval_seconds,
+        sample_interval_seconds=sample_interval_seconds,
         inference_interval_seconds=inference_interval_seconds,
     )
     db.add(project)
@@ -78,11 +78,12 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
 
     frame_count = db.query(func.count(Frame.id)).filter(Frame.project_id == project_id).scalar()
 
-    # Labeled = frames that actually have at least one annotation
     labeled_count = (
-        db.query(func.count(func.distinct(Annotation.frame_id)))
-        .join(Frame, Annotation.frame_id == Frame.id)
-        .filter(Frame.project_id == project_id)
+        db.query(func.count(Frame.id))
+        .filter(
+            Frame.project_id == project_id,
+            Frame.label_status.in_(["annotated", "negative"]),
+        )
         .scalar()
     ) or 0
     unlabeled_count = frame_count - labeled_count
@@ -155,7 +156,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
 
     class_color_map = {c.name: c.color for c in classes}
 
-    capture_running = worker_manager.is_capture_running(project_id)
+    sampling_running = worker_manager.is_sampling_running(project_id)
     inference_running = worker_manager.is_inference_running(project_id)
 
     return templates.TemplateResponse(
@@ -174,7 +175,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             "latest_frame": latest_frame,
             "deployed_model": deployed_model,
             "recent_inferred_frames": recent_inferred_frames,
-            "capture_running": capture_running,
+            "sampling_running": sampling_running,
             "inference_running": inference_running,
         },
     )
@@ -194,7 +195,7 @@ async def edit_project(
     project_id: int,
     name: str = Form(...),
     youtube_url: str = Form(...),
-    capture_interval_seconds: int = Form(...),
+    sample_interval_seconds: int = Form(...),
     inference_interval_seconds: int = Form(...),
     db: Session = Depends(get_db),
 ):
@@ -212,7 +213,7 @@ async def edit_project(
                 "form": {
                     "name": name,
                     "youtube_url": youtube_url,
-                    "capture_interval_seconds": capture_interval_seconds,
+                    "sample_interval_seconds": sample_interval_seconds,
                     "inference_interval_seconds": inference_interval_seconds,
                 },
             },
@@ -220,34 +221,34 @@ async def edit_project(
 
     project.name = name
     project.youtube_url = youtube_url
-    project.capture_interval_seconds = capture_interval_seconds
+    project.sample_interval_seconds = sample_interval_seconds
     project.inference_interval_seconds = inference_interval_seconds
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
-@router.post("/projects/{project_id}/capture/start")
-async def start_capture(project_id: int, db: Session = Depends(get_db)):
+@router.post("/projects/{project_id}/sampling/start")
+async def start_sampling(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    await worker_manager.start_capture(project_id, db)
-    project.capture_active = True
+    await worker_manager.start_sampling(project_id, db)
+    project.sampling_active = True
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
 
-@router.post("/projects/{project_id}/capture/stop")
-async def stop_capture(project_id: int, db: Session = Depends(get_db)):
+@router.post("/projects/{project_id}/sampling/stop")
+async def stop_sampling(project_id: int, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    await worker_manager.stop_capture(project_id)
-    project.capture_active = False
+    await worker_manager.stop_sampling(project_id)
+    project.sampling_active = False
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)

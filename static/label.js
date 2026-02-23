@@ -44,10 +44,18 @@ function init() {
 
   renderClassList();
   renderAnnotationList();
+  updateNegativeBanner();
 
   window.addEventListener('beforeunload', e => {
     if (dirty) { e.preventDefault(); e.returnValue = ''; }
   });
+}
+
+let labelStatus = (typeof LABEL_STATUS !== 'undefined') ? LABEL_STATUS : 'unlabeled';
+
+function updateNegativeBanner() {
+  const banner = document.getElementById('negative-banner');
+  if (banner) banner.style.display = (labelStatus === 'negative') ? 'block' : 'none';
 }
 
 function resizeCanvas() {
@@ -518,6 +526,45 @@ async function saveAndNext() {
   const ok = await saveAnnotations();
   if (ok && NEXT_FRAME_ID) {
     window.location.href = `/projects/${PROJECT_ID}/label/${NEXT_FRAME_ID}`;
+  }
+}
+
+async function markAsNegative() {
+  if (labelStatus === 'negative' && annotations.length === 0) {
+    // Already negative with no new annotations — undo back to unlabeled
+    const resp = await fetch(`/projects/${PROJECT_ID}/frames/${FRAME_ID}/annotations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ annotations: [] }),
+    });
+    if (resp.ok) {
+      labelStatus = 'unlabeled';
+      markClean();
+      updateNegativeBanner();
+    }
+    return;
+  }
+
+  const resp = await fetch(`/projects/${PROJECT_ID}/frames/${FRAME_ID}/mark_negative`, {
+    method: 'POST',
+  });
+
+  if (resp.ok) {
+    annotations = [];
+    labelStatus = 'negative';
+    markClean();
+    drawAll();
+    renderAnnotationList();
+    updateNegativeBanner();
+
+    const status = document.createElement('span');
+    status.textContent = ' Saved ✓';
+    status.style.cssText = 'color:#10b981; margin-left:0.5rem';
+    const btn = document.getElementById('mark-negative-btn');
+    btn.after(status);
+    setTimeout(() => status.remove(), 2000);
+  } else {
+    alert('Failed to mark as negative: ' + resp.statusText);
   }
 }
 

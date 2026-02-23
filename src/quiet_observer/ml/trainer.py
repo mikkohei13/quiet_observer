@@ -35,7 +35,7 @@ def export_yolo_dataset(
     class_map = {cls.id: idx for idx, cls in enumerate(classes)}
     class_names = {idx: cls.name for idx, cls in enumerate(classes)}
 
-    # Shuffle before splitting so train/val aren't biased by capture order
+    # Shuffle before splitting so train/val aren't biased by sampling order
     random.seed(42)
     random.shuffle(frame_ids)
 
@@ -62,15 +62,18 @@ def export_yolo_dataset(
             dst_img = img_dir / f"{frame_id}.jpg"
             shutil.copy2(src, dst_img)
 
-            annotations = db.query(Annotation).filter(Annotation.frame_id == frame_id).all()
             lbl_path = lbl_dir / f"{frame_id}.txt"
-            with open(lbl_path, "w") as f:
-                for ann in annotations:
-                    cls_idx = class_map.get(ann.class_id)
-                    if cls_idx is None:
-                        continue
-                    # YOLO format: class_id x_center y_center width height (normalized)
-                    f.write(f"{cls_idx} {ann.x:.6f} {ann.y:.6f} {ann.width:.6f} {ann.height:.6f}\n")
+            if frame.label_status == "negative":
+                # Empty label file = YOLO background/negative sample
+                lbl_path.touch()
+            else:
+                annotations = db.query(Annotation).filter(Annotation.frame_id == frame_id).all()
+                with open(lbl_path, "w") as f:
+                    for ann in annotations:
+                        cls_idx = class_map.get(ann.class_id)
+                        if cls_idx is None:
+                            continue
+                        f.write(f"{cls_idx} {ann.x:.6f} {ann.y:.6f} {ann.width:.6f} {ann.height:.6f}\n")
 
     # Write dataset.yaml
     yaml_content = f"""path: {dataset_dir.absolute()}
@@ -139,10 +142,15 @@ async def run_training(run_id: int) -> None:
             .order_by(func.count(Annotation.id).desc())
             .all()
         )
-        log(f"Training on {len(frame_ids)} frame(s) — class distribution:")
+        negative_count = (
+            db.query(Frame)
+            .filter(Frame.id.in_(frame_ids), Frame.label_status == "negative")
+            .count()
+        )
+        log(f"Training on {len(frame_ids)} frame(s) ({negative_count} negative) — class distribution:")
         for cls_name, cnt in class_counts:
             log(f"  {cls_name}: {cnt} annotation(s)")
-        if not class_counts:
+        if not class_counts and negative_count == 0:
             log("  (no annotations found)")
 
         yaml_path = dataset_dir / "dataset.yaml"

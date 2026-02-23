@@ -12,12 +12,12 @@ class Project(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
     youtube_url = Column(String, nullable=False)
-    capture_interval_seconds = Column(Integer, default=60)
+    sample_interval_seconds = Column(Integer, default=60)
     inference_interval_seconds = Column(Integer, default=30)
     created_at = Column(DateTime, default=datetime.utcnow)
-    capture_active = Column(Boolean, default=False)
+    sampling_active = Column(Boolean, default=False)
     inference_active = Column(Boolean, default=False)
-    last_capture_at = Column(DateTime, nullable=True)
+    last_sample_at = Column(DateTime, nullable=True)
     last_inference_at = Column(DateTime, nullable=True)
     last_inferred_frame_id = Column(Integer, nullable=True)
 
@@ -31,8 +31,8 @@ class Frame(Base):
     file_path = Column(String, nullable=False)  # relative to DATA_DIR
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
-    source = Column(String, default="capture")  # "capture" or "inference"
-    is_labeled = Column(Boolean, default=False)
+    source = Column(String, default="sampler")  # "sampler" or "inference"
+    label_status = Column(String, default="unlabeled")  # "unlabeled", "annotated", "negative"
     in_review_queue = Column(Boolean, default=False)
 
 
