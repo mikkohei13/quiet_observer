@@ -259,9 +259,12 @@ async def start_inference(project_id: int, db: Session = Depends(get_db)):
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    await worker_manager.start_inference(project_id, db)
+    project.last_inferred_frame_id = None
+    project.last_inference_at = None
     project.inference_active = True
     db.commit()
+
+    await worker_manager.start_inference(project_id, db)
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
 
@@ -274,6 +277,8 @@ async def stop_inference(project_id: int, db: Session = Depends(get_db)):
 
     await worker_manager.stop_inference(project_id)
     project.inference_active = False
+    project.last_inferred_frame_id = None
+    project.last_inference_at = None
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
@@ -293,6 +298,9 @@ async def inference_latest(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
 
     inference_running = worker_manager.is_inference_running(project_id)
+
+    if not inference_running:
+        return JSONResponse({"frame": None, "detections": [], "inference_running": False})
 
     frame = None
     if project.last_inferred_frame_id:

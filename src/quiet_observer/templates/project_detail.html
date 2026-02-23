@@ -112,9 +112,6 @@
       <span id="inf-live-dot" class="badge badge-green live-dot" style="font-size:0.7rem; padding:0.12rem 0.45rem">● LIVE</span>
       {% endif %}
     </div>
-    {% if inference_running %}
-    <button id="inf-pause-btn" class="btn btn-sm" type="button">⏸ Pause</button>
-    {% endif %}
   </div>
 
   <div id="inf-no-frame" class="inf-canvas-empty">No inference results yet.</div>
@@ -213,8 +210,6 @@
 
   var canvas   = document.getElementById('inf-canvas');
   var noFrame  = document.getElementById('inf-no-frame');
-  var pauseBtn = document.getElementById('inf-pause-btn');
-  var liveDot  = document.getElementById('inf-live-dot');
   var frameInfo = document.getElementById('inf-frame-info');
   var recentCard = document.getElementById('recent-results-card');
   var recentGrid = document.getElementById('recent-results-grid');
@@ -225,7 +220,6 @@
   var POLL_MS    = {{ project.inference_interval_seconds * 1000 }};
   var PROJECT_ID = {{ project.id }};
   var CLASS_COLORS = {{ class_color_map | tojson }};
-  var paused     = false;
   var currentFrameId = null;
   var recentTopFrameId = null;
 
@@ -278,10 +272,16 @@
     img.src = '/frames/' + frameId + '/image';
   }
 
+  function resetLiveInferenceView() {
+    currentFrameId = null;
+    noFrame.style.display = '';
+    canvas.style.display = 'none';
+    if (frameInfo) frameInfo.textContent = '';
+  }
+
   function updateUI(data) {
-    if (!data.frame) {
-      noFrame.style.display = '';
-      canvas.style.display  = 'none';
+    if (!data.inference_running || !data.frame) {
+      resetLiveInferenceView();
       return;
     }
     noFrame.style.display = 'none';
@@ -294,14 +294,14 @@
 
       if (frameInfo) {
         var t = new Date(data.frame.captured_at + 'Z');
-        var info = 'Frame #' + data.frame.id + ' · ' + t.toLocaleString();
+        var info = 'Frame #' + data.frame.id + ' \u00b7 ' + t.toLocaleString();
         if (data.detections.length === 0) {
-          info += ' · No detections';
+          info += ' \u00b7 No detections';
         } else {
           var parts = data.detections.map(function (d) {
             return d.class_name + ' ' + Math.round(d.confidence * 100) + '%';
           });
-          info += ' · ' + parts.join(', ');
+          info += ' \u00b7 ' + parts.join(', ');
         }
         frameInfo.textContent = info;
       }
@@ -362,35 +362,20 @@
   }
 
   function poll() {
-    if (paused) return;
     fetch('/projects/' + PROJECT_ID + '/inference/latest')
       .then(function (r) { return r.json(); })
       .then(function (data) {
         updateUI(data);
-        if (!paused) setTimeout(poll, POLL_MS);
+        setTimeout(poll, POLL_MS);
       })
       .catch(function () {
-        if (!paused) setTimeout(poll, POLL_MS * 2);
+        setTimeout(poll, POLL_MS * 2);
       });
   }
 
-  if (pauseBtn) {
-    pauseBtn.addEventListener('click', function () {
-      paused = !paused;
-      if (liveDot)  liveDot.style.display  = paused ? 'none' : '';
-      pauseBtn.textContent = paused ? '\u25b6 Resume' : '\u23f8 Pause';
-      if (!paused) poll();
-    });
-  }
-
-  fetch('/projects/' + PROJECT_ID + '/inference/latest')
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      updateUI(data);
-      {% if inference_running %}
-      if (!paused) setTimeout(poll, POLL_MS);
-      {% endif %}
-    });
+  {% if inference_running %}
+  poll();
+  {% endif %}
 }());
 </script>
 {% endblock %}

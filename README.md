@@ -46,6 +46,12 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 - Model export: ONNX export for faster CPU inference if needed
 - Smarter active learning: embedding-based novelty sampling, disagreement sampling (champion/challenger)
 
+### Training
+- Logs show a static plot image even when training is running.
+- Labelling should allow setting frames as "not containing classes", then training should use those as well, ignoring only frames that have no labelling data attached.
+- If the system crashes, it should afterwards show the training run as failed. Now it's forever in "running" state.
+- Labelling UI should easily allow A) labelling images that have not been labelled yet, B) re-examining images that have been labelled already.
+
 ### Monitor page
 - **Group detections by frame** — the current detection table has one row per detection; grouping by frame with bounding boxes drawn on a thumbnail would be more readable.
 - **Parse `class_map_json` for display** — the deployed model's class map is currently shown as a raw JSON string; render it as a formatted class list.

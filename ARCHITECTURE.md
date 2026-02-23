@@ -27,7 +27,7 @@ src/quiet_observer/
 ├── workers/
 │   ├── manager.py       # WorkerManager singleton — start/stop/track asyncio tasks per project
 │   ├── capture.py       # capture_loop(): yt-dlp → ffmpeg → save frame → Frame row
-│   └── inference.py     # inference_loop(): load YOLO → run on new frames → Detection rows
+│   └── inference.py     # inference_loop(): capture frame → run YOLO → Detection rows
 ├── ml/
 │   └── trainer.py       # Dataset export (YOLO format), model.train(), ModelVersion creation
 └── templates/           # 11 Jinja2 templates (base, projects, detail, label, train, monitor, etc.)
@@ -60,7 +60,7 @@ No ORM relationships are declared. All joins are explicit `db.query().filter()` 
 Key columns worth knowing:
 - `Project.capture_active` / `inference_active` — persisted intended state (not used for auto-restart)
 - `Project.last_inference_at` — updated per frame during inference
-- `Project.last_inferred_frame_id` — tracks the latest frame processed by inference (including zero-detection frames); used by `/inference/latest` and `/inference/recent` endpoints
+- `Project.last_inferred_frame_id` — tracks the latest frame processed by inference (including zero-detection frames); used by `/inference/latest` and `/inference/recent` endpoints; cleared on inference start so the UI resets
 - `Detection.detected_at` — explicit `datetime.utcnow()`
 - `ReviewQueue.reason` — `"no_detection"` or `"low_confidence:0.35"` etc.
 - `InferenceSession.stopped_at` — `None` means running or crashed; orphans closed on next start
@@ -70,19 +70,22 @@ Key columns worth knowing:
 
 `WorkerManager` (singleton at module level) holds `dict[int, asyncio.Task]` for capture and inference tasks, keyed by project_id.
 
-**Capture loop** (`capture.py`):
+**Capture loop** (`capture.py`) — for collecting frames to label and train on:
 1. Resolve YouTube stream URL via `yt-dlp --get-url`
 2. Grab one frame via `ffmpeg -i {url} -frames:v 1`
 3. Save to `data/projects/{id}/frames/{timestamp}.jpg`
 4. Insert `Frame` row, sleep `capture_interval_seconds`
 
-**Inference loop** (`inference.py`):
+**Inference loop** (`inference.py`) — for running detections on a live stream:
 1. Load deployed YOLO model (cached, reloaded on version change)
-2. Query frames with `id > last_frame_id`
-3. Run model via `run_in_executor` (thread pool, doesn't block event loop) with `conf=YOLO_INFERENCE_CONF` (default 0.1)
-4. Write `Detection` rows, commit per frame (immediate visibility to poll endpoints)
-5. Add to `ReviewQueue` if no detections or low confidence (< `UNCERTAINTY_THRESHOLD=0.5`)
-6. Sleep `inference_interval_seconds`
+2. Capture a frame from the YouTube stream (same yt-dlp/ffmpeg mechanism as capture; stream URL cached, re-resolved on failure)
+3. Save frame to disk, insert `Frame` row
+4. Run model via `run_in_executor` (thread pool) with `conf=YOLO_INFERENCE_CONF` (default 0.1)
+5. Write `Detection` rows, update `project.last_inferred_frame_id`
+6. Add to `ReviewQueue` if no detections or low confidence (< `UNCERTAINTY_THRESHOLD=0.5`)
+7. Sleep `inference_interval_seconds`
+
+Capture and inference are independent — either can run without the other. Both create `Frame` rows from the YouTube stream.
 
 Workers are fire-and-forget asyncio tasks. Stopped via `task.cancel()`. All stopped on app shutdown via lifespan.
 
@@ -107,8 +110,8 @@ Fine-tuning defaults (in `config_json`): `epochs=100`, `freeze=10` (backbone lay
 1. Polls `GET /projects/{id}/inference/latest` at `inference_interval_seconds` intervals
 2. Draws frame image + detection bounding boxes on an HTML5 canvas
 3. Only redraws when `frame.id` changes (dedup via `currentFrameId`)
-4. On new frame: also fetches `GET /projects/{id}/inference/recent` and rebuilds the recent results grid via DOM manipulation
-5. Pause/Resume toggle stops/starts the polling loop
+4. Resets to empty state when `inference_running` is false or no frame available
+5. On new frame: also fetches `GET /projects/{id}/inference/recent` and rebuilds the recent results grid
 
 The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object for consistent pill/box coloring.
 

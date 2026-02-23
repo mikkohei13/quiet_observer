@@ -1,4 +1,4 @@
-"""Inference worker: runs YOLO detection on captured frames."""
+"""Inference worker: captures frames from YouTube and runs YOLO detection."""
 import asyncio
 import functools
 import logging
@@ -11,6 +11,7 @@ from ..models import (
     Deployment, Detection, Frame, InferenceSession,
     ModelVersion, Project, ReviewQueue,
 )
+from .capture import resolve_stream_url, capture_frame, get_image_dimensions
 
 logger = logging.getLogger(__name__)
 
@@ -121,24 +122,18 @@ def _close_session(session_id: int) -> None:
 async def inference_loop(project_id: int) -> None:
     """Main inference loop. Runs until cancelled.
 
-    Per-run behaviour:
-    - Orphaned open sessions (from a previous server crash) are closed first.
-    - A new InferenceSession row is created on entry and closed on exit.
-    - The YOLO model is loaded once and cached; only reloaded when the
-      deployed model version changes.
-    - Every frame newer than the last processed one is run through the model,
-      so no captured frames are silently skipped.
-    - A uniqueness guard prevents duplicate Detection rows for the same
-      (frame, model_version) pair.
+    Each iteration captures a frame from the YouTube stream and runs YOLO on it.
+    Independent of the capture worker.
     """
     logger.info("Inference loop starting for project %d", project_id)
 
     _close_orphaned_sessions(project_id)
     session_id = _open_session(project_id)
 
-    _model = None             # cached YOLO model instance
-    _model_version_id = None  # version currently loaded in _model
-    last_frame_id = 0         # highest frame.id fully processed
+    _model = None
+    _model_version_id = None
+    _stream_url = None
+    frames_processed = 0
 
     try:
         while True:
@@ -166,7 +161,6 @@ async def inference_loop(project_id: int) -> None:
                     if not model_version:
                         logger.warning("Model version not found for deployment %d", deployment.id)
                     else:
-                        # Load (or reload) model only when version changes
                         if _model_version_id != model_version.id:
                             weights_path = Path(model_version.weights_path)
                             if weights_path.exists():
@@ -177,7 +171,6 @@ async def inference_loop(project_id: int) -> None:
                                 _model = YOLO(str(weights_path))
                                 _model_version_id = model_version.id
 
-                                # Record which model version this session is using
                                 sess = db.query(InferenceSession).filter(
                                     InferenceSession.id == session_id
                                 ).first()
@@ -189,47 +182,52 @@ async def inference_loop(project_id: int) -> None:
                                 _model = None
 
                         if _model is not None:
-                            new_frames = (
-                                db.query(Frame)
-                                .filter(
-                                    Frame.project_id == project_id,
-                                    Frame.id > last_frame_id,
+                            # Resolve stream URL (re-resolve periodically as URLs expire)
+                            if not _stream_url:
+                                _stream_url = await resolve_stream_url(project.youtube_url)
+                                if not _stream_url:
+                                    logger.warning("Could not resolve stream for project %d", project_id)
+
+                            if _stream_url:
+                                timestamp = datetime.utcnow()
+                                rel_path = Path(
+                                    f"projects/{project_id}/frames/{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
                                 )
-                                .order_by(Frame.id.asc())
-                                .all()
-                            )
+                                abs_path = DATA_DIR / rel_path
 
-                            processed = 0
-                            for frame in new_frames:
-                                already_done = db.query(Detection).filter(
-                                    Detection.frame_id == frame.id,
-                                    Detection.model_version_id == model_version.id,
-                                ).first()
-                                if already_done:
-                                    last_frame_id = frame.id
-                                    continue
+                                success = await capture_frame(_stream_url, abs_path)
+                                if not success:
+                                    logger.warning("Inference frame capture failed, re-resolving stream URL")
+                                    _stream_url = None
+                                else:
+                                    width, height = get_image_dimensions(abs_path)
+                                    frame = Frame(
+                                        project_id=project_id,
+                                        captured_at=timestamp,
+                                        file_path=str(rel_path),
+                                        width=width,
+                                        height=height,
+                                    )
+                                    db.add(frame)
+                                    db.flush()
 
-                                detections = await run_inference_on_frame(frame, _model, db)
+                                    detections = await run_inference_on_frame(frame, _model, db)
 
-                                for det in detections:
-                                    db.add(Detection(
-                                        frame_id=frame.id,
-                                        model_version_id=model_version.id,
-                                        class_name=det["class_name"],
-                                        confidence=det["confidence"],
-                                        x=det["x"],
-                                        y=det["y"],
-                                        width=det["width"],
-                                        height=det["height"],
-                                        detected_at=datetime.utcnow(),
-                                    ))
+                                    for det in detections:
+                                        db.add(Detection(
+                                            frame_id=frame.id,
+                                            model_version_id=model_version.id,
+                                            class_name=det["class_name"],
+                                            confidence=det["confidence"],
+                                            x=det["x"],
+                                            y=det["y"],
+                                            width=det["width"],
+                                            height=det["height"],
+                                            detected_at=datetime.utcnow(),
+                                        ))
 
-                                add_to_queue, reason = should_add_to_review_queue(detections)
-                                if add_to_queue:
-                                    already_queued = db.query(ReviewQueue).filter(
-                                        ReviewQueue.frame_id == frame.id,
-                                    ).first()
-                                    if not already_queued:
+                                    add_to_queue, reason = should_add_to_review_queue(detections)
+                                    if add_to_queue:
                                         db.add(ReviewQueue(
                                             frame_id=frame.id,
                                             project_id=project_id,
@@ -237,24 +235,23 @@ async def inference_loop(project_id: int) -> None:
                                         ))
                                         frame.in_review_queue = True
 
-                                last_frame_id = frame.id
-                                processed += 1
-
-                                project.last_inference_at = datetime.utcnow()
-                                project.last_inferred_frame_id = frame.id
-                                db.commit()
-
-                            if processed > 0:
-                                sess = db.query(InferenceSession).filter(
-                                    InferenceSession.id == session_id
-                                ).first()
-                                if sess:
-                                    sess.frames_processed += processed
+                                    project.last_inference_at = datetime.utcnow()
+                                    project.last_inferred_frame_id = frame.id
                                     db.commit()
-                                logger.info(
-                                    "Project %d: processed %d new frame(s)",
-                                    project_id, processed,
-                                )
+
+                                    frames_processed += 1
+                                    if frames_processed % 10 == 1 or frames_processed <= 3:
+                                        logger.info(
+                                            "Project %d: inference frame %d processed (%d detections)",
+                                            project_id, frame.id, len(detections),
+                                        )
+
+                                    sess = db.query(InferenceSession).filter(
+                                        InferenceSession.id == session_id
+                                    ).first()
+                                    if sess:
+                                        sess.frames_processed = frames_processed
+                                        db.commit()
 
             except asyncio.CancelledError:
                 raise
