@@ -134,3 +134,15 @@ class ReviewQueue(Base):
     added_at = Column(DateTime, default=datetime.utcnow)
     reason = Column(String, nullable=True)
     is_labeled = Column(Boolean, default=False)
+
+
+class InferenceSession(Base):
+    __tablename__ = "inference_sessions"
+
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    # Most recently active model version; updated when deployment changes mid-session
+    model_version_id = Column(Integer, ForeignKey("model_versions.id"), nullable=True)
+    started_at = Column(DateTime, nullable=False)
+    stopped_at = Column(DateTime, nullable=True)   # None = still running / interrupted
+    frames_processed = Column(Integer, default=0)

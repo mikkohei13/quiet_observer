@@ -48,6 +48,13 @@ async def train_page(request: Request, project_id: int, db: Session = Depends(ge
         .count()
     )
 
+    # Batch-load dataset versions for all runs
+    dv_ids = {run.dataset_version_id for run in training_runs}
+    dataset_versions = (
+        {dv.id: dv for dv in db.query(DatasetVersion).filter(DatasetVersion.id.in_(dv_ids)).all()}
+        if dv_ids else {}
+    )
+
     runs_with_metrics = []
     for run in training_runs:
         mv = db.query(ModelVersion).filter(ModelVersion.training_run_id == run.id).first()
@@ -57,7 +64,13 @@ async def train_page(request: Request, project_id: int, db: Session = Depends(ge
                 metrics = json.loads(mv.metrics_json)
             except Exception:
                 pass
-        runs_with_metrics.append({"run": run, "model_version": mv, "metrics": metrics})
+        dv = dataset_versions.get(run.dataset_version_id)
+        runs_with_metrics.append({
+            "run": run,
+            "model_version": mv,
+            "metrics": metrics,
+            "frame_count": dv.frame_count if dv else "—",
+        })
 
     mv_with_deploy = []
     for mv in model_versions:

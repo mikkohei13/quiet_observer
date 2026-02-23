@@ -96,10 +96,7 @@
           {% elif run.status == 'failed' %}<span class="badge badge-red">failed</span>
           {% else %}<span class="badge">{{ run.status }}</span>{% endif %}
         </td>
-        <td>
-          {% set dv_id = run.dataset_version_id %}
-          {{ run.dataset_version_id }}
-        </td>
+        <td>{{ item.frame_count }}</td>
         <td>
           {% if run.log_path %}
           <a href="/training_runs/{{ run.id }}/log" class="btn btn-sm">View log</a>

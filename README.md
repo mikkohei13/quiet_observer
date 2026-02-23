@@ -36,3 +36,18 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 ## Data
 
 All frames, model weights, and logs are stored under `data/` (gitignored).
+
+## Potential future improvements
+
+### Monitor page
+- **Group detections by frame** — the current detection table has one row per detection; grouping by frame with bounding boxes drawn on a thumbnail would be more readable.
+- **Parse `class_map_json` for display** — the deployed model's class map is currently shown as a raw JSON string; render it as a formatted class list.
+- **Show review reasons as text** — review queue items show reason only as a tooltip on the `?` badge; surface `no_detection` / `low confidence (43%)` as readable text.
+- **Show a "last processed" summary** — a header line with timestamp and detection count per tick makes it easier to confirm inference is actually running.
+- **Confidence timeline or histogram** — aggregate detection stats over time per class.
+
+### Data consistency
+- **Training should use annotation existence, not the `is_labeled` flag** — `start_training` currently selects frames where `Frame.is_labeled == True`, but the project page already computes labeled counts from actual `Annotation` rows. Align `start_training` to use a subquery on `Annotation.frame_id` so both are consistent.
+
+### Scalability
+- **Paginate the detection list and review queue** — both are currently capped at fixed limits (50 and 10); add pagination or infinite scroll for projects with many frames.

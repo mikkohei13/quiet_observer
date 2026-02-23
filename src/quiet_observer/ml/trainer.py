@@ -7,6 +7,8 @@ from pathlib import Path
 
 from ..config import DATA_DIR, YOLO_BASE_MODEL
 from ..database import SessionLocal
+from sqlalchemy import func
+
 from ..models import (
     Annotation, Class, DatasetVersionFrame,
     Frame, ModelVersion, TrainingRun,
@@ -113,6 +115,27 @@ async def run_training(run_id: int) -> None:
         log("Exporting YOLO dataset...")
         class_names = export_yolo_dataset(run, db, dataset_dir)
         log(f"Dataset exported: {class_names}")
+
+        # Log class distribution in the training dataset
+        frame_ids = [
+            dvf.frame_id
+            for dvf in db.query(DatasetVersionFrame)
+            .filter(DatasetVersionFrame.dataset_version_id == run.dataset_version_id)
+            .all()
+        ]
+        class_counts = (
+            db.query(Class.name, func.count(Annotation.id).label("cnt"))
+            .join(Annotation, Annotation.class_id == Class.id)
+            .filter(Annotation.frame_id.in_(frame_ids))
+            .group_by(Class.id, Class.name)
+            .order_by(func.count(Annotation.id).desc())
+            .all()
+        )
+        log(f"Training on {len(frame_ids)} frame(s) — class distribution:")
+        for cls_name, cnt in class_counts:
+            log(f"  {cls_name}: {cnt} annotation(s)")
+        if not class_counts:
+            log("  (no annotations found)")
 
         yaml_path = dataset_dir / "dataset.yaml"
 

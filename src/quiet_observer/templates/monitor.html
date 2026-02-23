@@ -1,5 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Monitor – {{ project.name }}{% endblock %}
+{% block head %}
+<style>
+  /* Inference session history */
+  .session-row {
+    padding: 0.65rem 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .session-row:last-child { border-bottom: none; }
+  .session-header {
+    display: flex; align-items: center; gap: 0.6rem;
+    flex-wrap: wrap; margin-bottom: 0.2rem;
+  }
+  .session-time { font-size: 0.875rem; }
+  .session-meta { font-size: 0.8rem; color: #6b7280; }
+  .session-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.25rem; }
+  .det-chip {
+    background: #f3f4f6; border-radius: 99px;
+    padding: 0.1rem 0.5rem; font-size: 0.8rem; color: #374151;
+  }
+  .no-detections { font-size: 0.8rem; color: #9ca3af; margin-top: 0.2rem; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
@@ -8,16 +30,16 @@
   </div>
   <div class="header-actions">
     {% if deployed_model %}
-    {% if inference_running %}
-    <span class="badge badge-blue">Inference running</span>
-    <form method="post" action="/projects/{{ project.id }}/inference/stop">
-      <button type="submit" class="btn btn-danger btn-sm">Stop</button>
-    </form>
-    {% else %}
-    <form method="post" action="/projects/{{ project.id }}/inference/start">
-      <button type="submit" class="btn btn-primary">Start Inference</button>
-    </form>
-    {% endif %}
+      {% if inference_running %}
+      <span class="badge badge-blue">Inference running</span>
+      <form method="post" action="/projects/{{ project.id }}/inference/stop">
+        <button type="submit" class="btn btn-danger btn-sm">Stop</button>
+      </form>
+      {% else %}
+      <form method="post" action="/projects/{{ project.id }}/inference/start">
+        <button type="submit" class="btn btn-primary">Start Inference</button>
+      </form>
+      {% endif %}
     {% else %}
     <span class="text-muted">No model deployed. <a href="/projects/{{ project.id }}/train">Train one first.</a></span>
     {% endif %}
@@ -28,21 +50,84 @@
 <div class="card" style="margin-bottom:1rem">
   <strong>Deployed:</strong> Model v{{ deployed_model.id }}
   {% if deployed_model.class_map_json %}
-  — Classes: {{ deployed_model.class_map_json }}
+  {% set class_map = deployed_model.class_map_json | tojson %}
+  — Classes:
+  {% set names = deployed_model.class_map_json %}
+  <span class="text-muted text-sm">{{ names }}</span>
   {% endif %}
 </div>
 {% endif %}
+
+<!-- Inference Sessions -->
+<div class="card">
+  <h2 style="margin-bottom:0.75rem">Inference Sessions</h2>
+  {% if session_data %}
+  {% for s in session_data %}
+  <div class="session-row">
+    <div class="session-header">
+      {% if s.status == 'running' %}
+      <span class="badge badge-blue">Running</span>
+      {% elif s.status == 'interrupted' %}
+      <span class="badge badge-orange">Interrupted</span>
+      {% else %}
+      <span class="badge">Stopped</span>
+      {% endif %}
+
+      <span class="session-time">
+        {{ s.session.started_at.strftime('%Y-%m-%d %H:%M:%S') }}
+        →
+        {% if s.session.stopped_at %}
+          {{ s.session.stopped_at.strftime('%H:%M:%S') }}
+        {% else %}
+          now
+        {% endif %}
+      </span>
+      <span class="session-meta">({{ s.duration_str }})</span>
+    </div>
+
+    <div class="session-meta" style="margin-bottom:0.2rem">
+      {% if s.model_version %}
+        Model v{{ s.model_version.id }}
+      {% else %}
+        No model loaded
+      {% endif %}
+      &nbsp;·&nbsp;
+      {{ s.session.frames_processed }} frame{{ 's' if s.session.frames_processed != 1 else '' }} processed
+    </div>
+
+    {% if s.detection_summary %}
+    <div class="session-chips">
+      {% for d in s.detection_summary %}
+      <span class="det-chip">{{ d.class_name }} ×{{ d.count }}</span>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="no-detections">No detections</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="text-muted">No inference sessions yet. Start inference above.</p>
+  {% endif %}
+</div>
 
 <!-- Review Queue -->
 {% if review_with_frames %}
 <div class="card">
   <h2>Review Queue ({{ review_with_frames|length }})</h2>
-  <p class="text-muted">These frames were flagged by the inference worker. <a href="/projects/{{ project.id }}/label">Label them</a> to improve the model.</p>
+  <p class="text-muted text-sm">
+    Frames flagged by the inference worker (no detection or low confidence).
+    <a href="/projects/{{ project.id }}/label">Label them</a> to improve the model.
+  </p>
   <div class="frame-grid">
     {% for item in review_with_frames %}
+    {% set reason = item.item.reason %}
     <a href="/projects/{{ project.id }}/label/{{ item.frame.id }}?from_queue=1" class="frame-thumb">
       <img src="/frames/{{ item.frame.id }}/image" alt="Frame {{ item.frame.id }}" loading="lazy">
-      <span class="frame-badge review" title="{{ item.item.reason }}">?</span>
+      <span class="frame-badge review"
+            title="{% if reason == 'no_detection' %}No detection{% elif reason.startswith('low_confidence:') %}Low confidence ({{ reason.split(':')[1] }}){% else %}{{ reason }}{% endif %}">
+        {% if reason == 'no_detection' %}∅{% else %}?{% endif %}
+      </span>
     </a>
     {% endfor %}
   </div>
@@ -62,7 +147,7 @@
       {% set det = item.detection %}
       {% set frame = item.frame %}
       <tr>
-        <td>{{ det.detected_at.strftime('%H:%M:%S') }}</td>
+        <td>{{ det.detected_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
         <td>{{ frame.id if frame else '?' }}</td>
         <td><strong>{{ det.class_name }}</strong></td>
         <td>
