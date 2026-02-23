@@ -16,7 +16,7 @@
     {% for frame in frames %}
     <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb labeled">
       <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
-      <span class="frame-badge">✓</span>
+      <span class="frame-badge annotated">✓</span>
     </a>
     {% endfor %}
   </div>

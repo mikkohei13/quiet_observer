@@ -74,7 +74,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from ..models import Annotation, Detection, Frame, Class, ModelVersion, Deployment
+    from ..models import Annotation, Frame, Class, ModelVersion, Deployment
 
     frame_count = db.query(func.count(Frame.id)).filter(Frame.project_id == project_id).scalar()
 
@@ -146,29 +146,6 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
 
     latest_frame = recent_frames[0] if recent_frames else None
 
-    recent_inferred_frames = []
-    if project.last_inferred_frame_id:
-        inferred_frames = (
-            db.query(Frame)
-            .filter(
-                Frame.project_id == project_id,
-                Frame.source == "inference",
-                Frame.id <= project.last_inferred_frame_id,
-            )
-            .order_by(Frame.id.desc())
-            .limit(10)
-            .all()
-        )
-        if inferred_frames:
-            rf_ids = [f.id for f in inferred_frames]
-            all_rf_dets = db.query(Detection).filter(Detection.frame_id.in_(rf_ids)).all()
-            dets_by_frame: dict = {}
-            for d in all_rf_dets:
-                dets_by_frame.setdefault(d.frame_id, []).append(d)
-            for f in inferred_frames:
-                dets = sorted(dets_by_frame.get(f.id, []), key=lambda d: -d.confidence)
-                recent_inferred_frames.append({"frame": f, "detections": dets})
-
     class_color_map = {c.name: c.color for c in classes}
 
     sampling_running = worker_manager.is_sampling_running(project_id)
@@ -190,7 +167,6 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             "recent_frames": recent_frames,
             "latest_frame": latest_frame,
             "deployed_model": deployed_model,
-            "recent_inferred_frames": recent_inferred_frames,
             "sampling_running": sampling_running,
             "inference_running": inference_running,
         },

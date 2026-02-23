@@ -14,8 +14,9 @@
   {% for frame in frames %}
   <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb {% if frame.label_status in ['annotated', 'negative'] %}labeled{% endif %}">
     <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
-    {% if frame.label_status == 'annotated' %}<span class="frame-badge">✓</span>{% endif %}
-    {% if frame.label_status == 'negative' %}<span class="frame-badge" style="background:#f59e0b">∅</span>{% endif %}
+    {% if frame.label_status == 'annotated' %}<span class="frame-badge annotated">✓</span>{% endif %}
+    {% if frame.label_status == 'negative' %}<span class="frame-badge negative">∅</span>{% endif %}
+    {% if frame.label_status == 'unlabeled' %}<span class="frame-badge unlabeled">?</span>{% endif %}
   </a>
   {% endfor %}
 </div>

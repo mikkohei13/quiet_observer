@@ -109,41 +109,6 @@
   <p id="inf-frame-info" class="text-muted text-sm" style="margin-top:0.45rem; min-height:1.1rem"></p>
 </div>
 
-<!-- Recent Inference Results -->
-<div class="card" id="recent-results-card" {% if not recent_inferred_frames %}style="display:none"{% endif %}>
-  <div class="card-header">
-    <h2>Recent Inference Results</h2>
-    <a href="/projects/{{ project.id }}/monitor" class="btn btn-sm">Full Monitor →</a>
-  </div>
-  <div class="inferred-grid" id="recent-results-grid">
-    {% for item in recent_inferred_frames %}
-    <div class="inferred-item">
-      <a href="/projects/{{ project.id }}/label/{{ item.frame.id }}">
-        <img src="/frames/{{ item.frame.id }}/image" alt="Frame {{ item.frame.id }}" loading="lazy">
-      </a>
-      <div class="inferred-item-body">
-        <div class="text-muted text-sm" style="margin-bottom:0.3rem">
-          {{ item.frame.captured_at.strftime('%H:%M:%S') }}
-          &nbsp;·&nbsp; #{{ item.frame.id }}
-        </div>
-        <div class="det-pills">
-          {% if item.detections %}
-            {% for det in item.detections %}
-            {% set det_color = class_color_map.get(det.class_name, '#6b7280') %}
-            <span class="det-pill" style="background:{{ det_color }}22; border-color:{{ det_color }}; color:{{ det_color }}">
-              {{ det.class_name }} {{ "%.0f"|format(det.confidence * 100) }}%
-            </span>
-            {% endfor %}
-          {% else %}
-          <span style="font-size:0.75rem; color:#9ca3af">∅ no detections</span>
-          {% endif %}
-        </div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</div>
-
 <!-- Classes -->
 <div class="card">
   <div class="card-header">
@@ -185,9 +150,9 @@
     {% for frame in recent_frames %}
     <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb {% if frame.label_status in ['annotated', 'negative'] %}labeled{% endif %}">
       <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
-      {% if frame.label_status == 'annotated' %}<span class="frame-badge">✓</span>{% endif %}
-      {% if frame.label_status == 'negative' %}<span class="frame-badge" style="background:#f59e0b">∅</span>{% endif %}
-      {% if frame.label_status == 'unlabeled' %}<span class="frame-badge review">?</span>{% endif %}
+      {% if frame.label_status == 'annotated' %}<span class="frame-badge annotated">✓</span>{% endif %}
+      {% if frame.label_status == 'negative' %}<span class="frame-badge negative">∅</span>{% endif %}
+      {% if frame.label_status == 'unlabeled' %}<span class="frame-badge unlabeled">?</span>{% endif %}
     </a>
     {% endfor %}
   </div>
@@ -201,8 +166,6 @@
   var canvas   = document.getElementById('inf-canvas');
   var noFrame  = document.getElementById('inf-no-frame');
   var frameInfo = document.getElementById('inf-frame-info');
-  var recentCard = document.getElementById('recent-results-card');
-  var recentGrid = document.getElementById('recent-results-grid');
 
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
@@ -211,7 +174,6 @@
   var PROJECT_ID = {{ project.id }};
   var CLASS_COLORS = {{ class_color_map | tojson }};
   var currentFrameId = null;
-  var recentTopFrameId = null;
 
   var PALETTE = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e84393'];
 
@@ -280,7 +242,6 @@
     if (data.frame.tick_id !== currentFrameId) {
       currentFrameId = data.frame.tick_id;
       drawDetections(data.frame.image_url, data.detections);
-      refreshRecentResults();
 
       if (frameInfo) {
         var t = new Date(data.frame.captured_at + 'Z');
@@ -296,59 +257,6 @@
         frameInfo.textContent = info;
       }
     }
-  }
-
-  function renderRecentResults(results) {
-    if (!recentGrid || !recentCard) return;
-    if (!results || results.length === 0) {
-      recentCard.style.display = 'none';
-      return;
-    }
-
-    var topId = results[0].frame.id;
-    if (topId === recentTopFrameId) return;
-    recentTopFrameId = topId;
-
-    recentCard.style.display = '';
-    var html = '';
-    for (var i = 0; i < results.length; i++) {
-      var item = results[i];
-      var t = new Date(item.frame.captured_at + 'Z');
-      var timeStr = t.toLocaleTimeString();
-
-      html += '<div class="inferred-item">';
-      html += '<a href="/projects/' + PROJECT_ID + '/label/' + item.frame.id + '">';
-      html += '<img src="/frames/' + item.frame.id + '/image" alt="Frame ' + item.frame.id + '" loading="lazy">';
-      html += '</a>';
-      html += '<div class="inferred-item-body">';
-      html += '<div class="text-muted text-sm" style="margin-bottom:0.3rem">';
-      html += timeStr + ' &middot; #' + item.frame.id;
-      html += '</div>';
-      html += '<div class="det-pills">';
-
-      if (item.detections && item.detections.length > 0) {
-        for (var j = 0; j < item.detections.length; j++) {
-          var det = item.detections[j];
-          var col = classColor(det.class_name);
-          var pct = Math.round(det.confidence * 100);
-          html += '<span class="det-pill" style="background:' + col + '22;border-color:' + col + ';color:' + col + '">';
-          html += det.class_name + ' ' + pct + '%';
-          html += '</span>';
-        }
-      } else {
-        html += '<span style="font-size:0.75rem;color:#9ca3af">\u2205 no detections</span>';
-      }
-
-      html += '</div></div></div>';
-    }
-    recentGrid.innerHTML = html;
-  }
-
-  function refreshRecentResults() {
-    fetch('/projects/' + PROJECT_ID + '/inference/recent')
-      .then(function (r) { return r.json(); })
-      .then(function (data) { renderRecentResults(data.results); })
-      .catch(function () {});
   }
 
   function poll() {

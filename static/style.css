@@ -173,7 +173,7 @@ a.stat-box-link:hover { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130
   border: 2px solid transparent;
 }
 .frame-thumb:hover { border-color: #2563eb; }
-.frame-thumb.labeled { border-color: #10b981; }
+.frame-thumb.labeled { border-color: #0ac74f; }
 .frame-thumb img { display: block; width: 100%; height: 80px; object-fit: cover; }
 .frame-badge {
   position: absolute; top: 2px; right: 2px;
@@ -181,7 +181,9 @@ a.stat-box-link:hover { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130
   border-radius: 3px; font-size: 0.7rem;
   padding: 0 3px;
 }
-.frame-badge.review { background: #f59e0b; }
+.frame-badge.annotated { background: #0ac74f; }
+.frame-badge.negative { background: #dd0000; }
+.frame-badge.unlabeled { background: #ffc526; }
 .thumb-mini { width: 48px; height: 36px; object-fit: cover; border-radius: 3px; display: block; }
 
 /* Classes */
