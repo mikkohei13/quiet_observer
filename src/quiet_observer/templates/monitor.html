@@ -111,29 +111,6 @@
   {% endif %}
 </div>
 
-<!-- Review Queue -->
-{% if review_with_frames %}
-<div class="card">
-  <h2>Review Queue ({{ review_with_frames|length }})</h2>
-  <p class="text-muted text-sm">
-    Frames flagged by the inference worker (no detection or low confidence).
-    <a href="/projects/{{ project.id }}/label">Label them</a> to improve the model.
-  </p>
-  <div class="frame-grid">
-    {% for item in review_with_frames %}
-    {% set reason = item.item.reason %}
-    <a href="/projects/{{ project.id }}/label/{{ item.frame.id }}?from_queue=1" class="frame-thumb">
-      <img src="/frames/{{ item.frame.id }}/image" alt="Frame {{ item.frame.id }}" loading="lazy">
-      <span class="frame-badge review"
-            title="{% if reason == 'no_detection' %}No detection{% elif reason.startswith('low_confidence:') %}Low confidence ({{ reason.split(':')[1] }}){% else %}{{ reason }}{% endif %}">
-        {% if reason == 'no_detection' %}∅{% else %}?{% endif %}
-      </span>
-    </a>
-    {% endfor %}
-  </div>
-</div>
-{% endif %}
-
 <!-- Recent Detections -->
 <div class="card">
   <h2>Recent Detections</h2>

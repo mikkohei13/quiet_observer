@@ -36,7 +36,6 @@ class Frame(Base):
     height = Column(Integer, nullable=True)
     source = Column(String, default="sampler")  # "sampler" or "inference"
     label_status = Column(String, default="unlabeled")  # "unlabeled", "annotated", "negative"
-    in_review_queue = Column(Boolean, default=False)
 
 
 class Class(Base):
@@ -128,17 +127,6 @@ class Detection(Base):
     width = Column(Float, nullable=False)
     height = Column(Float, nullable=False)
     detected_at = Column(DateTime, default=datetime.utcnow)
-
-
-class ReviewQueue(Base):
-    __tablename__ = "review_queue"
-
-    id = Column(Integer, primary_key=True)
-    frame_id = Column(Integer, ForeignKey("frames.id"), nullable=False)
-    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
-    added_at = Column(DateTime, default=datetime.utcnow)
-    reason = Column(String, nullable=True)
-    is_labeled = Column(Boolean, default=False)
 
 
 class InferenceSession(Base):

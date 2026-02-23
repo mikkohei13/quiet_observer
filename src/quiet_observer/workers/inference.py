@@ -17,7 +17,7 @@ from ..config import (
 from ..database import SessionLocal
 from ..models import (
     Deployment, Detection, Frame, InferenceSession,
-    ModelVersion, Project, ReviewQueue,
+    ModelVersion, Project,
 )
 from .capture import resolve_stream_url, capture_frame, get_image_dimensions
 from .manager import worker_manager
@@ -240,7 +240,7 @@ async def inference_loop(project_id: int) -> None:
                                         "detections": detections,
                                     })
 
-                                    should_sample, reason = should_sample_frame(
+                                    should_sample, _reason = should_sample_frame(
                                         detections, _last_sampled_at, time.monotonic(),
                                         auto_sample_interval=project.auto_sample_interval_seconds or AUTO_SAMPLE_INTERVAL_SECONDS,
                                         low_threshold=project.low_confidence_threshold if project.low_confidence_threshold is not None else LOW_CONFIDENCE_SAMPLE_THRESHOLD,
@@ -278,12 +278,6 @@ async def inference_loop(project_id: int) -> None:
                                                 detected_at=datetime.utcnow(),
                                             ))
 
-                                        db.add(ReviewQueue(
-                                            frame_id=frame.id,
-                                            project_id=project_id,
-                                            reason=reason,
-                                        ))
-                                        frame.in_review_queue = True
                                         _last_sampled_at = time.monotonic()
                                         project.last_inferred_frame_id = frame.id
 

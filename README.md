@@ -41,6 +41,13 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 
 ## Potential future improvements
 
+- Dark mode
+- Make navigation more consistent
+- Redesign monitor page
+- Export of detection data 
+- Export of trained models
+- User-editable settings for model hyperparameters
+- Fix confusing Clear all button logic on labelling page
 - Add max samples per hour, or implement change detection frame selection: Implement ChangeDetectionStrategy
 - Better dataset management: add train/val split control and “hard negatives”
 - Model export: ONNX export for faster CPU inference if needed

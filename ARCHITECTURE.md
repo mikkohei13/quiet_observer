@@ -19,7 +19,7 @@ src/quiet_observer/
 ├── main.py              # App factory, lifespan (init_db / stop workers), router mounting
 ├── config.py            # Paths (DATA_DIR, TEMPLATES_DIR, STATIC_DIR), DATABASE_URL, constants
 ├── database.py          # Engine, SessionLocal, get_db() dependency, init_db()
-├── models.py            # 12 SQLAlchemy models, no relationship() declarations
+├── models.py            # 11 SQLAlchemy models, no relationship() declarations
 ├── routers/
 │   ├── projects.py      # Project CRUD, sampling/inference start/stop, live inference JSON APIs
 │   ├── frames.py        # GET /frames/{id}/image — serves JPEGs from disk
@@ -47,8 +47,6 @@ data/                    # Runtime — DB, sampled/inferred frames, training run
 Project ──< Frame ──< Annotation >── Class
    │           │
    │           ├──< Detection (from inference)
-   │           │
-   │           └──< ReviewQueue (sampled frames for labeling)
    │
    ├──< DatasetVersion ──< DatasetVersionFrame >── Frame
    │
@@ -65,7 +63,6 @@ Key columns worth knowing:
 - `Project.last_inferred_frame_id` — tracks the latest persisted inference sample (`Frame.source="inference"`); used by `/inference/recent` and initial dashboard recent section; cleared on inference start so the UI resets
 - `Detection.detected_at` — explicit `datetime.utcnow()`
 - `Project.auto_sample_interval_seconds` / `low_confidence_threshold` / `high_confidence_threshold` — per-project inference sampling settings (defaults 600 / 0.3 / 0.7), editable via the project edit form
-- `ReviewQueue.reason` — `"auto_sample"` or `"uncertain_confidence:0.45"` etc.
 - `InferenceSession.stopped_at` — `None` means running or crashed; orphans closed on next start
 - `Frame.file_path` — relative to `DATA_DIR`
 - `Frame.source` — `"sampler"` (from sampling worker) or `"inference"` (from inference worker)
@@ -90,13 +87,13 @@ Key columns worth knowing:
    - Any detection confidence in [low_threshold, high_threshold] — the uncertain range worth human review (detections below low_threshold are treated as noise)
    - Time since last sample ≥ `auto_sample_interval_seconds`
    - Thresholds are per-project (configurable in project edit form), with config.py defaults as fallback
-6. If sampled: copy live image into `data/projects/{id}/frames/...`, insert `Frame(source="inference")`, write `Detection` rows, enqueue `ReviewQueue`, update `project.last_inferred_frame_id`
+6. If sampled: copy live image into `data/projects/{id}/frames/...`, insert `Frame(source="inference")`, write `Detection` rows, update `project.last_inferred_frame_id`
 7. Update `project.last_inference_at` on each successful live tick, then sleep `inference_interval_seconds`
 8. Delete old temporary live image when replaced / on shutdown
 
 Sampling and inference are independent — either can run without the other. Sampling always creates `Frame` rows; inference creates `Frame` rows only for selected samples. The `Frame.source` column distinguishes their origin.
 
-The labeling UI prioritizes ReviewQueue items first, then falls back to unlabeled `source="sampler"` frames. Inference frames only reach the labeling pipeline when explicitly sampled via the ReviewQueue.
+The labeling UI prioritizes unlabeled `source="inference"` frames first, then falls back to unlabeled `source="sampler"` frames.
 
 Workers are fire-and-forget asyncio tasks. Stopped via `task.cancel()`. All stopped on app shutdown via lifespan.
 

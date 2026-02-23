@@ -9,7 +9,7 @@ from ..config import TEMPLATES_DIR
 from ..database import get_db
 from ..models import (
     Deployment, Detection, Frame, InferenceSession,
-    ModelVersion, Project, ReviewQueue,
+    ModelVersion, Project,
 )
 from ..workers.manager import worker_manager
 
@@ -125,24 +125,6 @@ async def monitor_page(
         for det in recent_detections
     ]
 
-    # ── Review queue — batch-load frames to avoid N+1 ────────────────────────
-    review_items = (
-        db.query(ReviewQueue)
-        .filter(ReviewQueue.project_id == project_id, ReviewQueue.is_labeled == False)
-        .order_by(ReviewQueue.added_at.desc())
-        .limit(10)
-        .all()
-    )
-    rq_frame_ids = {item.frame_id for item in review_items}
-    rq_frames = (
-        {f.id: f for f in db.query(Frame).filter(Frame.id.in_(rq_frame_ids)).all()}
-        if rq_frame_ids else {}
-    )
-    review_with_frames = [
-        {"item": item, "frame": rq_frames.get(item.frame_id)}
-        for item in review_items
-    ]
-
     return templates.TemplateResponse(
         "monitor.html",
         {
@@ -151,7 +133,6 @@ async def monitor_page(
             "deployed_model": deployed_model,
             "session_data": session_data,
             "detection_data": detection_data,
-            "review_with_frames": review_with_frames,
             "inference_running": inference_running,
         },
     )

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..config import TEMPLATES_DIR
 from ..database import get_db
-from ..models import Annotation, Class, Frame, Project, ReviewQueue
+from ..models import Annotation, Class, Frame, Project
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -19,23 +19,26 @@ CLASS_COLORS = [
 
 @router.get("/projects/{project_id}/label", response_class=HTMLResponse)
 async def label_index(request: Request, project_id: int, db: Session = Depends(get_db)):
-    """Show first unlabeled frame, or the review queue."""
+    """Show next unlabeled frame for labeling."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Check review queue first
-    review = (
-        db.query(ReviewQueue)
-        .filter(ReviewQueue.project_id == project_id, ReviewQueue.is_labeled == False)
+    # Prioritize unlabeled inference frames first.
+    frame = (
+        db.query(Frame)
+        .filter(
+            Frame.project_id == project_id,
+            Frame.label_status == "unlabeled",
+            Frame.source == "inference",
+        )
+        .order_by(Frame.captured_at.asc())
         .first()
     )
-    if review:
-        return RedirectResponse(
-            f"/projects/{project_id}/label/{review.frame_id}?from_queue=1", status_code=303
-        )
+    if frame:
+        return RedirectResponse(f"/projects/{project_id}/label/{frame.id}", status_code=303)
 
-    # Otherwise, first unlabeled sampler frame (inference frames come through the queue)
+    # Otherwise, first unlabeled sampler frame.
     frame = (
         db.query(Frame)
         .filter(
@@ -71,7 +74,6 @@ async def label_frame(
     request: Request,
     project_id: int,
     frame_id: int,
-    from_queue: int = 0,
     db: Session = Depends(get_db),
 ):
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -130,7 +132,6 @@ async def label_frame(
             "next_frame": next_frame,
             "frame_index": frame_index,
             "total_frames": total_frames,
-            "from_queue": from_queue,
         },
     )
 
@@ -165,14 +166,6 @@ async def save_annotations(
         db.add(db_ann)
 
     frame.label_status = "annotated" if len(annotations) > 0 else "unlabeled"
-
-    # Mark as labeled in review queue if applicable
-    review = db.query(ReviewQueue).filter(
-        ReviewQueue.frame_id == frame_id,
-        ReviewQueue.project_id == project_id,
-    ).first()
-    if review:
-        review.is_labeled = True
 
     db.commit()
     return JSONResponse({"status": "ok", "count": len(annotations)})
@@ -241,13 +234,6 @@ async def mark_negative(
 
     db.query(Annotation).filter(Annotation.frame_id == frame_id).delete()
     frame.label_status = "negative"
-
-    review = db.query(ReviewQueue).filter(
-        ReviewQueue.frame_id == frame_id,
-        ReviewQueue.project_id == project_id,
-    ).first()
-    if review:
-        review.is_labeled = True
 
     db.commit()
     return JSONResponse({"status": "ok"})
