@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import STATIC_DIR
 from .database import init_db
+from .ml.trainer import reconcile_stale_training_runs
 from .routers import annotations, frames, monitoring, projects, training
 from .workers.manager import worker_manager
 
@@ -19,6 +20,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    reconcile_stale_training_runs()
     yield
     await worker_manager.stop_all()
 

@@ -18,6 +18,32 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 
+def reconcile_stale_training_runs() -> int:
+    """Mark orphaned running training runs as failed after app restarts."""
+    db = SessionLocal()
+    try:
+        stale_runs = db.query(TrainingRun).filter(TrainingRun.status == "running").all()
+        if not stale_runs:
+            return 0
+
+        finished_at = datetime.utcnow()
+        for run in stale_runs:
+            run.status = "failed"
+            run.finished_at = run.finished_at or finished_at
+            if not run.error_message:
+                run.error_message = "Interrupted: app restarted while training was running."
+
+        db.commit()
+        logger.warning("Marked %d stale training run(s) as failed on startup.", len(stale_runs))
+        return len(stale_runs)
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to reconcile stale training runs on startup.")
+        return 0
+    finally:
+        db.close()
+
+
 def export_yolo_dataset(
     run: TrainingRun,
     db,
