@@ -17,3 +17,9 @@ YOLO_BASE_MODEL = "yolo11n.pt"
 
 # YOLO prediction confidence threshold (detections below this are discarded)
 YOLO_INFERENCE_CONF = 0.1
+
+# During inference, sample a frame for labeling every N seconds
+AUTO_SAMPLE_INTERVAL_SECONDS = 600
+
+# During inference, sample a frame when any detection confidence is below this
+LOW_CONFIDENCE_SAMPLE_THRESHOLD = 0.3

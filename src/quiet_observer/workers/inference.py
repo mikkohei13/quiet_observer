@@ -2,10 +2,16 @@
 import asyncio
 import functools
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 
-from ..config import DATA_DIR, UNCERTAINTY_THRESHOLD, YOLO_INFERENCE_CONF
+from ..config import (
+    AUTO_SAMPLE_INTERVAL_SECONDS,
+    DATA_DIR,
+    LOW_CONFIDENCE_SAMPLE_THRESHOLD,
+    YOLO_INFERENCE_CONF,
+)
 from ..database import SessionLocal
 from ..models import (
     Deployment, Detection, Frame, InferenceSession,
@@ -66,14 +72,24 @@ async def run_inference_on_frame(frame: Frame, model, db) -> list[dict]:
         return []
 
 
-def should_add_to_review_queue(detections: list[dict]) -> tuple[bool, str]:
-    """Decide whether to push frame to review queue."""
-    if not detections:
-        return True, "no_detection"
+def should_sample_frame(
+    detections: list[dict],
+    last_sampled_at: float,
+    now: float,
+) -> tuple[bool, str]:
+    """Decide whether to sample this frame for the labeling pipeline.
 
-    max_conf = max(d["confidence"] for d in detections)
-    if max_conf < UNCERTAINTY_THRESHOLD:
-        return True, f"low_confidence:{max_conf:.2f}"
+    A frame is sampled when:
+    - Enough time has elapsed since the last sample (time-based), or
+    - Any detection has confidence below the threshold (uncertain detection).
+    """
+    if detections:
+        min_conf = min(d["confidence"] for d in detections)
+        if min_conf < LOW_CONFIDENCE_SAMPLE_THRESHOLD:
+            return True, f"low_confidence:{min_conf:.2f}"
+
+    if now - last_sampled_at >= AUTO_SAMPLE_INTERVAL_SECONDS:
+        return True, "auto_sample"
 
     return False, ""
 
@@ -134,6 +150,7 @@ async def inference_loop(project_id: int) -> None:
     _model_version_id = None
     _stream_url = None
     frames_processed = 0
+    _last_sampled_at = 0.0
 
     try:
         while True:
@@ -207,6 +224,7 @@ async def inference_loop(project_id: int) -> None:
                                         file_path=str(rel_path),
                                         width=width,
                                         height=height,
+                                        source="inference",
                                     )
                                     db.add(frame)
                                     db.flush()
@@ -226,14 +244,17 @@ async def inference_loop(project_id: int) -> None:
                                             detected_at=datetime.utcnow(),
                                         ))
 
-                                    add_to_queue, reason = should_add_to_review_queue(detections)
-                                    if add_to_queue:
+                                    should_sample, reason = should_sample_frame(
+                                        detections, _last_sampled_at, time.monotonic(),
+                                    )
+                                    if should_sample:
                                         db.add(ReviewQueue(
                                             frame_id=frame.id,
                                             project_id=project_id,
                                             reason=reason,
                                         ))
                                         frame.in_review_queue = True
+                                        _last_sampled_at = time.monotonic()
 
                                     project.last_inference_at = datetime.utcnow()
                                     project.last_inferred_frame_id = frame.id

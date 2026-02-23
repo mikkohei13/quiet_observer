@@ -53,20 +53,6 @@
       </div>
     </div>
     <p class="text-muted text-sm">Interval: every {{ project.capture_interval_seconds }}s &nbsp;·&nbsp; <strong>{{ frame_count }}</strong> frame{{ 's' if frame_count != 1 else '' }} captured</p>
-
-    {% if latest_frame %}
-    <a href="/projects/{{ project.id }}/label/{{ latest_frame.id }}" class="latest-frame-link">
-      <img src="/frames/{{ latest_frame.id }}/image" alt="Latest frame" class="latest-frame-img">
-    </a>
-    <p class="text-muted text-sm" style="margin-top:0.4rem">
-      Latest: {{ latest_frame.captured_at.strftime('%Y-%m-%d %H:%M:%S') }}
-      {% if latest_frame.width and latest_frame.height %}
-      &nbsp;·&nbsp; {{ latest_frame.width }}×{{ latest_frame.height }}
-      {% endif %}
-    </p>
-    {% else %}
-    <p class="text-muted text-sm" style="margin-top:0.5rem">No frames yet.</p>
-    {% endif %}
   </div>
 
   <!-- Inference control -->
@@ -197,7 +183,7 @@
     <a href="/projects/{{ project.id }}/label/{{ frame.id }}" class="frame-thumb {% if frame.is_labeled %}labeled{% endif %}">
       <img src="/frames/{{ frame.id }}/image" alt="Frame {{ frame.id }}" loading="lazy">
       {% if frame.is_labeled %}<span class="frame-badge">✓</span>{% endif %}
-      {% if frame.in_review_queue %}<span class="frame-badge review">?</span>{% endif %}
+      {% if not frame.is_labeled %}<span class="frame-badge review">?</span>{% endif %}
     </a>
     {% endfor %}
   </div>

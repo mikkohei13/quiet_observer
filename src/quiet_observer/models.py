@@ -31,6 +31,7 @@ class Frame(Base):
     file_path = Column(String, nullable=False)  # relative to DATA_DIR
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
+    source = Column(String, default="capture")  # "capture" or "inference"
     is_labeled = Column(Boolean, default=False)
     in_review_queue = Column(Boolean, default=False)
 

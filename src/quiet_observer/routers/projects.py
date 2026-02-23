@@ -112,7 +112,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
         db.query(Frame)
         .filter(Frame.project_id == project_id)
         .order_by(Frame.captured_at.desc())
-        .limit(12)
+        .limit(30)
         .all()
     )
 

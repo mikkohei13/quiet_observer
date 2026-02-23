@@ -35,3 +35,11 @@ def init_db():
             conn.commit()
         except Exception:
             conn.rollback()
+
+        try:
+            conn.execute(text(
+                "ALTER TABLE frames ADD COLUMN source VARCHAR DEFAULT 'capture'"
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()

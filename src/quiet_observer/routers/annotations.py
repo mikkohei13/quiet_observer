@@ -35,10 +35,14 @@ async def label_index(request: Request, project_id: int, db: Session = Depends(g
             f"/projects/{project_id}/label/{review.frame_id}?from_queue=1", status_code=303
         )
 
-    # Otherwise, first unlabeled frame
+    # Otherwise, first unlabeled capture frame (inference frames come through the queue)
     frame = (
         db.query(Frame)
-        .filter(Frame.project_id == project_id, Frame.is_labeled == False)
+        .filter(
+            Frame.project_id == project_id,
+            Frame.is_labeled == False,
+            Frame.source == "capture",
+        )
         .order_by(Frame.captured_at.asc())
         .first()
     )

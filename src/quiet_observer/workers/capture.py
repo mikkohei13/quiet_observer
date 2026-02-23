@@ -110,6 +110,7 @@ async def capture_loop(project_id: int) -> None:
                         file_path=str(rel_path),
                         width=width,
                         height=height,
+                        source="capture",
                     )
                     db.add(frame)
                     project.last_capture_at = timestamp
