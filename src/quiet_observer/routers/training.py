@@ -1,11 +1,14 @@
 import asyncio
+import csv
 import json
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
-from ..config import TEMPLATES_DIR
+from ..config import DATA_DIR, TEMPLATES_DIR
 from ..database import get_db
 from ..models import (
     DatasetVersion, DatasetVersionFrame, Deployment,
@@ -125,7 +128,7 @@ async def start_training(project_id: int, db: Session = Depends(get_db)):
         project_id=project_id,
         dataset_version_id=dv.id,
         status="pending",
-        config_json=json.dumps({"epochs": 30, "imgsz": 640}),
+        config_json=json.dumps({"epochs": 100, "imgsz": 640, "freeze": 10, "lr0": 0.001, "patience": 20}),
     )
     db.add(run)
     db.commit()
@@ -165,12 +168,91 @@ async def training_log(request: Request, run_id: int, db: Session = Depends(get_
 
     log_content = ""
     if run.log_path:
-        from pathlib import Path
         log_path = Path(run.log_path)
         if log_path.exists():
             log_content = log_path.read_text()
 
+    config = {}
+    if run.config_json:
+        try:
+            config = json.loads(run.config_json)
+        except Exception:
+            pass
+
+    duration = None
+    if run.started_at and run.finished_at:
+        duration = (run.finished_at - run.started_at).total_seconds()
+
+    run_dir = DATA_DIR / f"projects/{run.project_id}/runs/{run.id}"
+    yolo_dir = run_dir / "yolo"
+
+    # Parse results CSV for the metrics table
+    results_rows = []
+    results_headers = []
+    results_csv_path = yolo_dir / "results.csv"
+    if results_csv_path.exists():
+        try:
+            with open(results_csv_path) as f:
+                reader = csv.DictReader(f)
+                results_headers = [h.strip() for h in (reader.fieldnames or [])]
+                for row in reader:
+                    results_rows.append({k.strip(): v.strip() for k, v in row.items()})
+        except Exception:
+            pass
+
+    # Discover available plot images
+    plot_files = []
+    PLOT_NAMES = [
+        ("results.png", "Training curves"),
+        ("confusion_matrix.png", "Confusion matrix"),
+        ("confusion_matrix_normalized.png", "Confusion matrix (normalized)"),
+        ("BoxF1_curve.png", "F1 curve"),
+        ("BoxPR_curve.png", "PR curve"),
+        ("BoxP_curve.png", "Precision curve"),
+        ("BoxR_curve.png", "Recall curve"),
+        ("labels.jpg", "Label distribution"),
+        ("val_batch0_labels.jpg", "Validation batch — ground truth"),
+        ("val_batch0_pred.jpg", "Validation batch — predictions"),
+    ]
+    for filename, title in PLOT_NAMES:
+        if (yolo_dir / filename).exists():
+            plot_files.append({
+                "url": f"/training_runs/{run.id}/files/yolo/{filename}",
+                "title": title,
+            })
+
     return templates.TemplateResponse(
         "training_log.html",
-        {"request": request, "run": run, "log_content": log_content},
+        {
+            "request": request,
+            "run": run,
+            "log_content": log_content,
+            "config": config,
+            "duration": duration,
+            "results_headers": results_headers,
+            "results_rows": results_rows,
+            "plot_files": plot_files,
+        },
     )
+
+
+@router.get("/training_runs/{run_id}/files/{file_path:path}")
+async def serve_training_file(run_id: int, file_path: str, db: Session = Depends(get_db)):
+    """Serve files (plots, images) from a training run directory."""
+    run = db.query(TrainingRun).filter(TrainingRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Training run not found")
+
+    run_dir = DATA_DIR / f"projects/{run.project_id}/runs/{run.id}"
+    full_path = (run_dir / file_path).resolve()
+
+    if not str(full_path).startswith(str(run_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not full_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    suffix = full_path.suffix.lower()
+    media_types = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".csv": "text/csv", ".yaml": "text/yaml"}
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    return FileResponse(str(full_path), media_type=media_type)

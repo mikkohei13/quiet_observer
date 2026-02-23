@@ -19,6 +19,7 @@ class Project(Base):
     inference_active = Column(Boolean, default=False)
     last_capture_at = Column(DateTime, nullable=True)
     last_inference_at = Column(DateTime, nullable=True)
+    last_inferred_frame_id = Column(Integer, nullable=True)
 
 
 class Frame(Base):

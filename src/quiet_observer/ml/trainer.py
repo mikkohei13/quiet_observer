@@ -1,6 +1,7 @@
 """YOLO training pipeline."""
 import json
 import logging
+import random
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,10 @@ def export_yolo_dataset(
     classes = db.query(Class).filter(Class.project_id == run.project_id).all()
     class_map = {cls.id: idx for idx, cls in enumerate(classes)}
     class_names = {idx: cls.name for idx, cls in enumerate(classes)}
+
+    # Shuffle before splitting so train/val aren't biased by capture order
+    random.seed(42)
+    random.shuffle(frame_ids)
 
     # Split 80/20 train/val
     split_idx = max(1, int(len(frame_ids) * 0.8))
@@ -108,8 +113,11 @@ async def run_training(run_id: int) -> None:
     try:
         log(f"Training run {run_id} started at {datetime.utcnow()}")
         config = json.loads(run.config_json or "{}")
-        epochs = config.get("epochs", 30)
+        epochs = config.get("epochs", 100)
         imgsz = config.get("imgsz", 640)
+        freeze = config.get("freeze", 10)
+        lr0 = config.get("lr0", 0.001)
+        patience = config.get("patience", 20)
 
         dataset_dir = run_dir / "dataset"
         log("Exporting YOLO dataset...")
@@ -148,6 +156,8 @@ async def run_training(run_id: int) -> None:
 
             device = "mps" if torch.backends.mps.is_available() else "cpu"
             log(f"Training on device: {device}")
+            log(f"Hyperparameters: epochs={epochs}, imgsz={imgsz}, freeze={freeze}, lr0={lr0}, patience={patience}")
+            log(f"Base model: {YOLO_BASE_MODEL}")
 
             model = YOLO(YOLO_BASE_MODEL)
             results = model.train(
@@ -157,8 +167,11 @@ async def run_training(run_id: int) -> None:
                 project=str(run_dir),
                 name="yolo",
                 device=device,
-                verbose=False,
+                verbose=True,
                 plots=True,
+                freeze=freeze,
+                lr0=lr0,
+                patience=patience,
             )
             return results
 
@@ -184,6 +197,10 @@ async def run_training(run_id: int) -> None:
                     if rows:
                         last = rows[-1]
                         metrics = {k.strip(): v.strip() for k, v in last.items()}
+                log(f"Final epoch metrics:")
+                for k, v in metrics.items():
+                    log(f"  {k}: {v}")
+                log(f"Total epochs completed: {len(rows)}")
         except Exception as e:
             log(f"Could not parse metrics: {e}")
 
@@ -200,7 +217,9 @@ async def run_training(run_id: int) -> None:
         run.status = "done"
         run.finished_at = datetime.utcnow()
         db.commit()
-        log(f"Training completed. Model version saved.")
+        log(f"Training completed in {(run.finished_at - run.started_at).total_seconds():.1f}s. Model version saved.")
+        log(f"Weights: {best_weights}")
+        log(f"Class map: {class_names}")
 
     except Exception as e:
         logger.exception("Training failed for run %d: %s", run_id, e)

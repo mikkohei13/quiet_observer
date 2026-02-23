@@ -71,29 +71,89 @@
 
   <!-- Inference control -->
   <div class="card">
-    <h2>Inference</h2>
-    <p class="text-muted">Every {{ project.inference_interval_seconds }}s</p>
-    {% if project.last_inference_at %}
-    <p class="text-muted text-sm">Last: {{ project.last_inference_at.strftime('%Y-%m-%d %H:%M:%S') }}</p>
-    {% endif %}
+    <div class="card-header">
+      <h2>Inference</h2>
+      <div style="display:flex; align-items:center; gap:0.5rem">
+        {% if inference_running %}
+        <span class="badge badge-blue">Running</span>
+        <form method="post" action="/projects/{{ project.id }}/inference/stop">
+          <button type="submit" class="btn btn-danger btn-sm">Stop</button>
+        </form>
+        {% else %}
+        <span class="badge">Stopped</span>
+        {% if deployed_model %}
+        <form method="post" action="/projects/{{ project.id }}/inference/start">
+          <button type="submit" class="btn btn-primary btn-sm">Start</button>
+        </form>
+        {% endif %}
+        {% endif %}
+      </div>
+    </div>
+    <p class="text-muted text-sm">
+      Interval: every {{ project.inference_interval_seconds }}s
+      {% if project.last_inference_at %}
+      &nbsp;·&nbsp; Last: {{ project.last_inference_at.strftime('%H:%M:%S') }}
+      {% endif %}
+    </p>
     {% if deployed_model %}
     <p class="text-muted text-sm">Model: v{{ deployed_model.id }}</p>
     {% else %}
-    <p class="text-muted text-sm">No model deployed</p>
+    <p class="text-muted text-sm">No model deployed. <a href="/projects/{{ project.id }}/train">Train one first.</a></p>
     {% endif %}
+  </div>
+</div>
+
+<!-- Live Inference Canvas -->
+<div class="card">
+  <div class="card-header">
+    <div style="display:flex; align-items:center; gap:0.6rem">
+      <h2 style="margin:0">Live Inference</h2>
+      {% if inference_running %}
+      <span id="inf-live-dot" class="badge badge-green live-dot" style="font-size:0.7rem; padding:0.12rem 0.45rem">● LIVE</span>
+      {% endif %}
+    </div>
     {% if inference_running %}
-    <span class="badge badge-blue">Running</span>
-    <form method="post" action="/projects/{{ project.id }}/inference/stop">
-      <button type="submit" class="btn btn-danger btn-sm">Stop</button>
-    </form>
-    {% else %}
-    <span class="badge">Stopped</span>
-    {% if deployed_model %}
-    <form method="post" action="/projects/{{ project.id }}/inference/start">
-      <button type="submit" class="btn btn-primary btn-sm">Start</button>
-    </form>
+    <button id="inf-pause-btn" class="btn btn-sm" type="button">⏸ Pause</button>
     {% endif %}
-    {% endif %}
+  </div>
+
+  <div id="inf-no-frame" class="inf-canvas-empty">No inference results yet.</div>
+  <canvas id="inf-canvas" style="display:none; max-width:100%; height:auto; border-radius:6px; background:#f3f4f6"></canvas>
+  <p id="inf-frame-info" class="text-muted text-sm" style="margin-top:0.45rem; min-height:1.1rem"></p>
+</div>
+
+<!-- Recent Inference Results -->
+<div class="card" id="recent-results-card" {% if not recent_inferred_frames %}style="display:none"{% endif %}>
+  <div class="card-header">
+    <h2>Recent Inference Results</h2>
+    <a href="/projects/{{ project.id }}/monitor" class="btn btn-sm">Full Monitor →</a>
+  </div>
+  <div class="inferred-grid" id="recent-results-grid">
+    {% for item in recent_inferred_frames %}
+    <div class="inferred-item">
+      <a href="/projects/{{ project.id }}/label/{{ item.frame.id }}">
+        <img src="/frames/{{ item.frame.id }}/image" alt="Frame {{ item.frame.id }}" loading="lazy">
+      </a>
+      <div class="inferred-item-body">
+        <div class="text-muted text-sm" style="margin-bottom:0.3rem">
+          {{ item.frame.captured_at.strftime('%H:%M:%S') }}
+          &nbsp;·&nbsp; #{{ item.frame.id }}
+        </div>
+        <div class="det-pills">
+          {% if item.detections %}
+            {% for det in item.detections %}
+            {% set det_color = class_color_map.get(det.class_name, '#6b7280') %}
+            <span class="det-pill" style="background:{{ det_color }}22; border-color:{{ det_color }}; color:{{ det_color }}">
+              {{ det.class_name }} {{ "%.0f"|format(det.confidence * 100) }}%
+            </span>
+            {% endfor %}
+          {% else %}
+          <span style="font-size:0.75rem; color:#9ca3af">∅ no detections</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
   </div>
 </div>
 
@@ -147,7 +207,190 @@
 </div>
 {% endif %}
 
-{% if capture_running %}
-<script>setTimeout(() => location.reload(), 5000);</script>
-{% endif %}
+<script>
+(function () {
+  'use strict';
+
+  var canvas   = document.getElementById('inf-canvas');
+  var noFrame  = document.getElementById('inf-no-frame');
+  var pauseBtn = document.getElementById('inf-pause-btn');
+  var liveDot  = document.getElementById('inf-live-dot');
+  var frameInfo = document.getElementById('inf-frame-info');
+  var recentCard = document.getElementById('recent-results-card');
+  var recentGrid = document.getElementById('recent-results-grid');
+
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+
+  var POLL_MS    = {{ project.inference_interval_seconds * 1000 }};
+  var PROJECT_ID = {{ project.id }};
+  var CLASS_COLORS = {{ class_color_map | tojson }};
+  var paused     = false;
+  var currentFrameId = null;
+  var recentTopFrameId = null;
+
+  var PALETTE = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6','#1abc9c','#e67e22','#e84393'];
+
+  function classColor(name) {
+    if (CLASS_COLORS[name]) return CLASS_COLORS[name];
+    var h = 0;
+    for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+    return PALETTE[h % PALETTE.length];
+  }
+
+  function drawDetections(frameId, dets) {
+    var img = new Image();
+    img.onload = function () {
+      canvas.width  = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+
+      var iw = img.naturalWidth, ih = img.naturalHeight;
+      var lw = Math.max(2, Math.round(iw / 500));
+      var fs = Math.max(13, Math.round(iw / 70));
+      ctx.font = 'bold ' + fs + 'px system-ui';
+
+      for (var i = 0; i < dets.length; i++) {
+        var d   = dets[i];
+        var bw  = d.width  * iw;
+        var bh  = d.height * ih;
+        var bx  = d.x * iw - bw / 2;
+        var by  = d.y * ih - bh / 2;
+        var col = classColor(d.class_name);
+
+        ctx.strokeStyle = col;
+        ctx.lineWidth   = lw;
+        ctx.strokeRect(bx, by, bw, bh);
+
+        var label = d.class_name + ' ' + Math.round(d.confidence * 100) + '%';
+        var tw    = ctx.measureText(label).width;
+        var lh    = fs + 6;
+        var ly    = (by >= lh) ? by - lh : by + bh;
+
+        ctx.fillStyle   = col;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(bx, ly, tw + 10, lh);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle   = '#fff';
+        ctx.fillText(label, bx + 5, ly + lh - 4);
+      }
+    };
+    img.src = '/frames/' + frameId + '/image';
+  }
+
+  function updateUI(data) {
+    if (!data.frame) {
+      noFrame.style.display = '';
+      canvas.style.display  = 'none';
+      return;
+    }
+    noFrame.style.display = 'none';
+    canvas.style.display  = 'block';
+
+    if (data.frame.id !== currentFrameId) {
+      currentFrameId = data.frame.id;
+      drawDetections(data.frame.id, data.detections);
+      refreshRecentResults();
+
+      if (frameInfo) {
+        var t = new Date(data.frame.captured_at + 'Z');
+        var info = 'Frame #' + data.frame.id + ' · ' + t.toLocaleString();
+        if (data.detections.length === 0) {
+          info += ' · No detections';
+        } else {
+          var parts = data.detections.map(function (d) {
+            return d.class_name + ' ' + Math.round(d.confidence * 100) + '%';
+          });
+          info += ' · ' + parts.join(', ');
+        }
+        frameInfo.textContent = info;
+      }
+    }
+  }
+
+  function renderRecentResults(results) {
+    if (!recentGrid || !recentCard) return;
+    if (!results || results.length === 0) {
+      recentCard.style.display = 'none';
+      return;
+    }
+
+    var topId = results[0].frame.id;
+    if (topId === recentTopFrameId) return;
+    recentTopFrameId = topId;
+
+    recentCard.style.display = '';
+    var html = '';
+    for (var i = 0; i < results.length; i++) {
+      var item = results[i];
+      var t = new Date(item.frame.captured_at + 'Z');
+      var timeStr = t.toLocaleTimeString();
+
+      html += '<div class="inferred-item">';
+      html += '<a href="/projects/' + PROJECT_ID + '/label/' + item.frame.id + '">';
+      html += '<img src="/frames/' + item.frame.id + '/image" alt="Frame ' + item.frame.id + '" loading="lazy">';
+      html += '</a>';
+      html += '<div class="inferred-item-body">';
+      html += '<div class="text-muted text-sm" style="margin-bottom:0.3rem">';
+      html += timeStr + ' &middot; #' + item.frame.id;
+      html += '</div>';
+      html += '<div class="det-pills">';
+
+      if (item.detections && item.detections.length > 0) {
+        for (var j = 0; j < item.detections.length; j++) {
+          var det = item.detections[j];
+          var col = classColor(det.class_name);
+          var pct = Math.round(det.confidence * 100);
+          html += '<span class="det-pill" style="background:' + col + '22;border-color:' + col + ';color:' + col + '">';
+          html += det.class_name + ' ' + pct + '%';
+          html += '</span>';
+        }
+      } else {
+        html += '<span style="font-size:0.75rem;color:#9ca3af">\u2205 no detections</span>';
+      }
+
+      html += '</div></div></div>';
+    }
+    recentGrid.innerHTML = html;
+  }
+
+  function refreshRecentResults() {
+    fetch('/projects/' + PROJECT_ID + '/inference/recent')
+      .then(function (r) { return r.json(); })
+      .then(function (data) { renderRecentResults(data.results); })
+      .catch(function () {});
+  }
+
+  function poll() {
+    if (paused) return;
+    fetch('/projects/' + PROJECT_ID + '/inference/latest')
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        updateUI(data);
+        if (!paused) setTimeout(poll, POLL_MS);
+      })
+      .catch(function () {
+        if (!paused) setTimeout(poll, POLL_MS * 2);
+      });
+  }
+
+  if (pauseBtn) {
+    pauseBtn.addEventListener('click', function () {
+      paused = !paused;
+      if (liveDot)  liveDot.style.display  = paused ? 'none' : '';
+      pauseBtn.textContent = paused ? '\u25b6 Resume' : '\u23f8 Pause';
+      if (!paused) poll();
+    });
+  }
+
+  fetch('/projects/' + PROJECT_ID + '/inference/latest')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      updateUI(data);
+      {% if inference_running %}
+      if (!paused) setTimeout(poll, POLL_MS);
+      {% endif %}
+    });
+}());
+</script>
 {% endblock %}

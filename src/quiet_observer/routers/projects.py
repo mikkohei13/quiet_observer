@@ -1,7 +1,8 @@
 import subprocess
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import TEMPLATES_DIR
@@ -73,8 +74,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    from ..models import Annotation, Frame, Class, ModelVersion, Deployment, ReviewQueue
-    from sqlalchemy import func
+    from ..models import Annotation, Detection, Frame, Class, ModelVersion, Deployment, ReviewQueue
 
     frame_count = db.query(func.count(Frame.id)).filter(Frame.project_id == project_id).scalar()
 
@@ -131,6 +131,30 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
 
     latest_frame = recent_frames[0] if recent_frames else None
 
+    recent_inferred_frames = []
+    if project.last_inferred_frame_id:
+        inferred_frames = (
+            db.query(Frame)
+            .filter(
+                Frame.project_id == project_id,
+                Frame.id <= project.last_inferred_frame_id,
+            )
+            .order_by(Frame.id.desc())
+            .limit(10)
+            .all()
+        )
+        if inferred_frames:
+            rf_ids = [f.id for f in inferred_frames]
+            all_rf_dets = db.query(Detection).filter(Detection.frame_id.in_(rf_ids)).all()
+            dets_by_frame: dict = {}
+            for d in all_rf_dets:
+                dets_by_frame.setdefault(d.frame_id, []).append(d)
+            for f in inferred_frames:
+                dets = sorted(dets_by_frame.get(f.id, []), key=lambda d: -d.confidence)
+                recent_inferred_frames.append({"frame": f, "detections": dets})
+
+    class_color_map = {c.name: c.color for c in classes}
+
     capture_running = worker_manager.is_capture_running(project_id)
     inference_running = worker_manager.is_inference_running(project_id)
 
@@ -144,10 +168,12 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             "unlabeled_count": unlabeled_count,
             "classes": classes,
             "class_stats": class_stats,
+            "class_color_map": class_color_map,
             "review_count": review_count,
             "recent_frames": recent_frames,
             "latest_frame": latest_frame,
             "deployed_model": deployed_model,
+            "recent_inferred_frames": recent_inferred_frames,
             "capture_running": capture_running,
             "inference_running": inference_running,
         },
@@ -251,3 +277,101 @@ async def stop_inference(project_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return RedirectResponse(f"/projects/{project_id}", status_code=303)
+
+
+@router.get("/projects/{project_id}/inference/latest")
+async def inference_latest(project_id: int, db: Session = Depends(get_db)):
+    """Return the most recently inferred frame with its detections as JSON.
+
+    Uses project.last_inferred_frame_id so the endpoint returns the latest
+    processed frame even when it had zero detections.
+    """
+    from ..models import Detection, Frame
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    inference_running = worker_manager.is_inference_running(project_id)
+
+    frame = None
+    if project.last_inferred_frame_id:
+        frame = db.query(Frame).filter(Frame.id == project.last_inferred_frame_id).first()
+
+    if not frame:
+        return JSONResponse({"frame": None, "detections": [], "inference_running": inference_running})
+
+    detections = db.query(Detection).filter(Detection.frame_id == frame.id).all()
+
+    return JSONResponse({
+        "frame": {
+            "id": frame.id,
+            "captured_at": frame.captured_at.isoformat(),
+            "width": frame.width,
+            "height": frame.height,
+        },
+        "detections": [
+            {
+                "class_name": d.class_name,
+                "confidence": round(d.confidence, 3),
+                "x": d.x,
+                "y": d.y,
+                "width": d.width,
+                "height": d.height,
+            }
+            for d in detections
+        ],
+        "inference_running": inference_running,
+    })
+
+
+@router.get("/projects/{project_id}/inference/recent")
+async def inference_recent(project_id: int, db: Session = Depends(get_db)):
+    """Return recent inferred frames (including zero-detection ones) as JSON."""
+    from ..models import Detection, Frame
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project.last_inferred_frame_id:
+        return JSONResponse({"results": []})
+
+    recent_frames = (
+        db.query(Frame)
+        .filter(
+            Frame.project_id == project_id,
+            Frame.id <= project.last_inferred_frame_id,
+        )
+        .order_by(Frame.id.desc())
+        .limit(10)
+        .all()
+    )
+
+    if not recent_frames:
+        return JSONResponse({"results": []})
+
+    rf_ids = [f.id for f in recent_frames]
+    all_dets = db.query(Detection).filter(Detection.frame_id.in_(rf_ids)).all()
+    dets_by_frame: dict = {}
+    for d in all_dets:
+        dets_by_frame.setdefault(d.frame_id, []).append(d)
+
+    results = []
+    for frame in recent_frames:
+        dets = sorted(dets_by_frame.get(frame.id, []), key=lambda d: -d.confidence)
+        results.append({
+            "frame": {
+                "id": frame.id,
+                "captured_at": frame.captured_at.isoformat(),
+            },
+            "detections": [
+                {
+                    "class_name": d.class_name,
+                    "confidence": round(d.confidence, 3),
+                }
+                for d in dets
+            ],
+        })
+
+    return JSONResponse({"results": results})

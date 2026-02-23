@@ -1,15 +1,97 @@
 {% extends "base.html" %}
 {% block title %}Training Log #{{ run.id }}{% endblock %}
+{% block head %}
+<style>
+  .run-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.9rem; }
+  .run-meta dt { color: #6b7280; font-weight: 500; }
+  .run-meta dd { margin: 0; }
+  .metrics-wrap { overflow-x: auto; }
+  .metrics-table { border-collapse: collapse; font-size: 0.78rem; white-space: nowrap; }
+  .metrics-table th, .metrics-table td { padding: 0.3rem 0.6rem; border: 1px solid #e5e7eb; }
+  .metrics-table th { background: #f9fafb; position: sticky; top: 0; font-weight: 600; color: #374151; }
+  .metrics-table td { font-family: monospace; text-align: right; }
+  .metrics-table tr:hover td { background: #f3f4f6; }
+  .plots-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 1rem; }
+  .plot-item img { width: 100%; border-radius: 4px; border: 1px solid #e5e5e5; }
+  .plot-item p { font-size: 0.85rem; color: #6b7280; margin-top: 0.3rem; }
+  .section-title { font-size: 1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-header">
   <div>
     <a href="/projects/{{ run.project_id }}/train" class="text-muted">← Training</a>
-    <h1>Training Run #{{ run.id }} — {{ run.status }}</h1>
+    <h1>Training Run #{{ run.id }}
+      {% if run.status == 'done' %}<span class="badge badge-green">done</span>
+      {% elif run.status == 'running' %}<span class="badge badge-blue">running</span>
+      {% elif run.status == 'failed' %}<span class="badge badge-red">failed</span>
+      {% else %}<span class="badge">{{ run.status }}</span>{% endif %}
+    </h1>
   </div>
 </div>
+
 <div class="card">
+  <h2>Run details</h2>
+  <dl class="run-meta">
+    <dt>Started</dt>
+    <dd>{{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else '—' }}</dd>
+    {% if run.finished_at %}
+    <dt>Finished</dt>
+    <dd>{{ run.finished_at.strftime('%Y-%m-%d %H:%M:%S') }}</dd>
+    {% endif %}
+    {% if duration is not none %}
+    <dt>Duration</dt>
+    <dd>{{ '%d:%02d' | format((duration // 60) | int, (duration % 60) | int) }}</dd>
+    {% endif %}
+    {% if config %}
+    <dt>Epochs</dt><dd>{{ config.get('epochs', '—') }}</dd>
+    <dt>Image size</dt><dd>{{ config.get('imgsz', '—') }}</dd>
+    <dt>Freeze layers</dt><dd>{{ config.get('freeze', '—') }}</dd>
+    <dt>Learning rate</dt><dd>{{ config.get('lr0', '—') }}</dd>
+    <dt>Patience</dt><dd>{{ config.get('patience', '—') }}</dd>
+    {% endif %}
+    {% if run.error_message %}
+    <dt>Error</dt>
+    <dd style="color:#991b1b">{{ run.error_message }}</dd>
+    {% endif %}
+  </dl>
+</div>
+
+{% if plot_files %}
+<div class="card">
+  <h2>Plots</h2>
+  <div class="plots-grid">
+    {% for plot in plot_files %}
+    <div class="plot-item">
+      <a href="{{ plot.url }}" target="_blank"><img src="{{ plot.url }}" alt="{{ plot.title }}" loading="lazy"></a>
+      <p>{{ plot.title }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if results_rows %}
+<div class="card">
+  <h2>Epoch metrics ({{ results_rows | length }} epochs)</h2>
+  <div class="metrics-wrap" style="max-height:400px; overflow-y:auto;">
+    <table class="metrics-table">
+      <thead><tr>{% for h in results_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in results_rows %}
+        <tr>{% for h in results_headers %}<td>{{ row.get(h, '') }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Log output</h2>
   <pre class="log-output">{{ log_content if log_content else "(no log yet)" }}</pre>
 </div>
+
 {% if run.status == 'running' %}
 <script>setTimeout(() => location.reload(), 5000);</script>
 {% endif %}

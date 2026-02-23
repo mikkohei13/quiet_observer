@@ -1,6 +1,8 @@
 # Quiet Observer
 
-Local computer vision app: capture frames from YouTube live streams, label them, train a YOLO model, and run continuous inference — all on your Mac.
+Local computer vision app: capture frames from YouTube live streams, label them, train a YOLO model, and run continuous inference — all on your own computer.
+
+See ARCHITECTURE.md for the technical architecture.
 
 ## Prerequisites
 
@@ -19,7 +21,7 @@ uv sync
 ## Start
 
 ```bash
-uv run uvicorn quiet_observer.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn quiet_observer.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
@@ -38,6 +40,11 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 All frames, model weights, and logs are stored under `data/` (gitignored).
 
 ## Potential future improvements
+
+- Change detection frame selection: Implement ChangeDetectionStrategy and plug into capture loop
+- Better dataset management: add train/val split control and “hard negatives”
+- Model export: ONNX export for faster CPU inference if needed
+- Smarter active learning: embedding-based novelty sampling, disagreement sampling (champion/challenger)
 
 ### Monitor page
 - **Group detections by frame** — the current detection table has one row per detection; grouping by frame with bounding boxes drawn on a thumbnail would be more readable.

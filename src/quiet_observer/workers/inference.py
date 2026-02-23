@@ -1,10 +1,11 @@
 """Inference worker: runs YOLO detection on captured frames."""
 import asyncio
+import functools
 import logging
 from datetime import datetime
 from pathlib import Path
 
-from ..config import DATA_DIR, UNCERTAINTY_THRESHOLD
+from ..config import DATA_DIR, UNCERTAINTY_THRESHOLD, YOLO_INFERENCE_CONF
 from ..database import SessionLocal
 from ..models import (
     Deployment, Detection, Frame, InferenceSession,
@@ -12,6 +13,11 @@ from ..models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _run_model_sync(model, frame_path_str: str):
+    """Run YOLO model synchronously (called via run_in_executor)."""
+    return model(frame_path_str, verbose=False, conf=YOLO_INFERENCE_CONF)
 
 
 async def run_inference_on_frame(frame: Frame, model, db) -> list[dict]:
@@ -22,7 +28,10 @@ async def run_inference_on_frame(frame: Frame, model, db) -> list[dict]:
             logger.warning("Frame file not found: %s", frame_path)
             return []
 
-        results = model(str(frame_path), verbose=False)
+        loop = asyncio.get_running_loop()
+        results = await loop.run_in_executor(
+            None, functools.partial(_run_model_sync, model, str(frame_path))
+        )
         detections = []
 
         if results and len(results) > 0:
@@ -180,7 +189,6 @@ async def inference_loop(project_id: int) -> None:
                                 _model = None
 
                         if _model is not None:
-                            # Process every new frame since the last tick, in order
                             new_frames = (
                                 db.query(Frame)
                                 .filter(
@@ -193,7 +201,6 @@ async def inference_loop(project_id: int) -> None:
 
                             processed = 0
                             for frame in new_frames:
-                                # Safety guard: skip if already processed by this model version
                                 already_done = db.query(Detection).filter(
                                     Detection.frame_id == frame.id,
                                     Detection.model_version_id == model_version.id,
@@ -233,15 +240,17 @@ async def inference_loop(project_id: int) -> None:
                                 last_frame_id = frame.id
                                 processed += 1
 
-                            if processed > 0:
                                 project.last_inference_at = datetime.utcnow()
-                                # Update frames_processed count on the session
+                                project.last_inferred_frame_id = frame.id
+                                db.commit()
+
+                            if processed > 0:
                                 sess = db.query(InferenceSession).filter(
                                     InferenceSession.id == session_id
                                 ).first()
                                 if sess:
                                     sess.frames_processed += processed
-                                db.commit()
+                                    db.commit()
                                 logger.info(
                                     "Project %d: processed %d new frame(s)",
                                     project_id, processed,

@@ -14,3 +14,6 @@ UNCERTAINTY_THRESHOLD = 0.5
 
 # YOLO base model for fine-tuning
 YOLO_BASE_MODEL = "yolo11n.pt"
+
+# YOLO prediction confidence threshold (detections below this are discarded)
+YOLO_INFERENCE_CONF = 0.1
