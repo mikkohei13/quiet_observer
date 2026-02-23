@@ -2,6 +2,7 @@
 import asyncio
 import functools
 import logging
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from ..models import (
     ModelVersion, Project, ReviewQueue,
 )
 from .capture import resolve_stream_url, capture_frame, get_image_dimensions
+from .manager import worker_manager
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +30,9 @@ def _run_model_sync(model, frame_path_str: str):
     return model(frame_path_str, verbose=False, conf=YOLO_INFERENCE_CONF)
 
 
-async def run_inference_on_frame(frame: Frame, model, db) -> list[dict]:
-    """Run YOLO inference on a frame using a pre-loaded model object."""
+async def run_inference_on_frame(frame_path: Path, model) -> list[dict]:
+    """Run YOLO inference on an image path using a pre-loaded model object."""
     try:
-        frame_path = DATA_DIR / frame.file_path
         if not frame_path.exists():
             logger.warning("Frame file not found: %s", frame_path)
             return []
@@ -69,7 +70,7 @@ async def run_inference_on_frame(frame: Frame, model, db) -> list[dict]:
         return detections
 
     except Exception as e:
-        logger.exception("Inference error on frame %d: %s", frame.id, e)
+        logger.exception("Inference error on frame path %s: %s", frame_path, e)
         return []
 
 
@@ -158,6 +159,8 @@ async def inference_loop(project_id: int) -> None:
     _stream_url = None
     frames_processed = 0
     _last_sampled_at = 0.0
+    _live_tick_id = 0
+    _latest_live_file: Path | None = None
 
     try:
         while True:
@@ -214,42 +217,28 @@ async def inference_loop(project_id: int) -> None:
 
                             if _stream_url:
                                 timestamp = datetime.utcnow()
-                                rel_path = Path(
-                                    f"projects/{project_id}/frames/{timestamp.strftime('%Y%m%d_%H%M%S')}.jpg"
+                                live_rel_path = Path(
+                                    f"projects/{project_id}/live/{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
                                 )
-                                abs_path = DATA_DIR / rel_path
+                                live_abs_path = DATA_DIR / live_rel_path
 
-                                success = await capture_frame(_stream_url, abs_path)
+                                success = await capture_frame(_stream_url, live_abs_path)
                                 if not success:
                                     logger.warning("Inference frame capture failed, re-resolving stream URL")
                                     _stream_url = None
                                 else:
-                                    width, height = get_image_dimensions(abs_path)
-                                    frame = Frame(
-                                        project_id=project_id,
-                                        captured_at=timestamp,
-                                        file_path=str(rel_path),
-                                        width=width,
-                                        height=height,
-                                        source="inference",
-                                    )
-                                    db.add(frame)
-                                    db.flush()
+                                    width, height = get_image_dimensions(live_abs_path)
+                                    detections = await run_inference_on_frame(live_abs_path, _model)
 
-                                    detections = await run_inference_on_frame(frame, _model, db)
-
-                                    for det in detections:
-                                        db.add(Detection(
-                                            frame_id=frame.id,
-                                            model_version_id=model_version.id,
-                                            class_name=det["class_name"],
-                                            confidence=det["confidence"],
-                                            x=det["x"],
-                                            y=det["y"],
-                                            width=det["width"],
-                                            height=det["height"],
-                                            detected_at=datetime.utcnow(),
-                                        ))
+                                    _live_tick_id += 1
+                                    worker_manager.set_latest_inference_live(project_id, {
+                                        "tick_id": _live_tick_id,
+                                        "captured_at": timestamp.isoformat(),
+                                        "width": width,
+                                        "height": height,
+                                        "file_path": str(live_rel_path),
+                                        "detections": detections,
+                                    })
 
                                     should_sample, reason = should_sample_frame(
                                         detections, _last_sampled_at, time.monotonic(),
@@ -258,6 +247,37 @@ async def inference_loop(project_id: int) -> None:
                                         high_threshold=project.high_confidence_threshold if project.high_confidence_threshold is not None else HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
                                     )
                                     if should_sample:
+                                        sampled_rel_path = Path(
+                                            f"projects/{project_id}/frames/{timestamp.strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+                                        )
+                                        sampled_abs_path = DATA_DIR / sampled_rel_path
+                                        sampled_abs_path.parent.mkdir(parents=True, exist_ok=True)
+                                        shutil.copy2(live_abs_path, sampled_abs_path)
+
+                                        frame = Frame(
+                                            project_id=project_id,
+                                            captured_at=timestamp,
+                                            file_path=str(sampled_rel_path),
+                                            width=width,
+                                            height=height,
+                                            source="inference",
+                                        )
+                                        db.add(frame)
+                                        db.flush()
+
+                                        for det in detections:
+                                            db.add(Detection(
+                                                frame_id=frame.id,
+                                                model_version_id=model_version.id,
+                                                class_name=det["class_name"],
+                                                confidence=det["confidence"],
+                                                x=det["x"],
+                                                y=det["y"],
+                                                width=det["width"],
+                                                height=det["height"],
+                                                detected_at=datetime.utcnow(),
+                                            ))
+
                                         db.add(ReviewQueue(
                                             frame_id=frame.id,
                                             project_id=project_id,
@@ -265,16 +285,16 @@ async def inference_loop(project_id: int) -> None:
                                         ))
                                         frame.in_review_queue = True
                                         _last_sampled_at = time.monotonic()
+                                        project.last_inferred_frame_id = frame.id
 
                                     project.last_inference_at = datetime.utcnow()
-                                    project.last_inferred_frame_id = frame.id
                                     db.commit()
 
                                     frames_processed += 1
                                     if frames_processed % 10 == 1 or frames_processed <= 3:
                                         logger.info(
-                                            "Project %d: inference frame %d processed (%d detections)",
-                                            project_id, frame.id, len(detections),
+                                            "Project %d: live inference tick %d processed (%d detections)",
+                                            project_id, _live_tick_id, len(detections),
                                         )
 
                                     sess = db.query(InferenceSession).filter(
@@ -283,6 +303,13 @@ async def inference_loop(project_id: int) -> None:
                                     if sess:
                                         sess.frames_processed = frames_processed
                                         db.commit()
+
+                                    if _latest_live_file and _latest_live_file.exists():
+                                        try:
+                                            _latest_live_file.unlink()
+                                        except Exception:
+                                            logger.debug("Failed to delete previous live frame: %s", _latest_live_file)
+                                    _latest_live_file = live_abs_path
 
             except asyncio.CancelledError:
                 raise
@@ -297,5 +324,11 @@ async def inference_loop(project_id: int) -> None:
                 raise
 
     finally:
+        worker_manager.set_latest_inference_live(project_id, None)
+        if _latest_live_file and _latest_live_file.exists():
+            try:
+                _latest_live_file.unlink()
+            except Exception:
+                logger.debug("Failed to delete latest live frame on shutdown: %s", _latest_live_file)
         _close_session(session_id)
         logger.info("Inference session %d closed for project %d", session_id, project_id)

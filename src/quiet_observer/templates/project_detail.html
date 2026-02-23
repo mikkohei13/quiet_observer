@@ -56,7 +56,7 @@
         {% endif %}
       </div>
     </div>
-    <p class="text-muted text-sm">Interval: every {{ project.sample_interval_seconds }}s &nbsp;·&nbsp; <strong>{{ frame_count }}</strong> frame{{ 's' if frame_count != 1 else '' }} sampled</p>
+    <p class="text-muted text-sm">Interval: every {{ project.sample_interval_seconds }}s</p>
   </div>
 
   <!-- Inference control -->
@@ -223,7 +223,7 @@
     return PALETTE[h % PALETTE.length];
   }
 
-  function drawDetections(frameId, dets) {
+  function drawDetections(imageUrl, dets) {
     var img = new Image();
     img.onload = function () {
       canvas.width  = img.naturalWidth;
@@ -260,7 +260,7 @@
         ctx.fillText(label, bx + 5, ly + lh - 4);
       }
     };
-    img.src = '/frames/' + frameId + '/image';
+    img.src = imageUrl;
   }
 
   function resetLiveInferenceView() {
@@ -278,14 +278,14 @@
     noFrame.style.display = 'none';
     canvas.style.display  = 'block';
 
-    if (data.frame.id !== currentFrameId) {
-      currentFrameId = data.frame.id;
-      drawDetections(data.frame.id, data.detections);
+    if (data.frame.tick_id !== currentFrameId) {
+      currentFrameId = data.frame.tick_id;
+      drawDetections(data.frame.image_url, data.detections);
       refreshRecentResults();
 
       if (frameInfo) {
         var t = new Date(data.frame.captured_at + 'Z');
-        var info = 'Frame #' + data.frame.id + ' \u00b7 ' + t.toLocaleString();
+        var info = 'Live frame \u00b7 ' + t.toLocaleString();
         if (data.detections.length === 0) {
           info += ' \u00b7 No detections';
         } else {

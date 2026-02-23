@@ -27,9 +27,9 @@ src/quiet_observer/
 │   ├── training.py      # Training dashboard, start training, deploy model
 │   └── monitoring.py    # Monitor dashboard, system status page
 ├── workers/
-│   ├── manager.py       # WorkerManager singleton — start/stop/track asyncio tasks per project
+│   ├── manager.py       # WorkerManager singleton — start/stop/track tasks + latest live inference snapshot
 │   ├── capture.py       # capture utilities (yt-dlp, ffmpeg) + sample_loop()
-│   └── inference.py     # inference_loop(): capture frame → run YOLO → Detection rows
+│   └── inference.py     # inference_loop(): temp live capture → YOLO → persist only sampled frames
 ├── ml/
 │   └── trainer.py       # Dataset export (YOLO format), model.train(), ModelVersion creation
 └── templates/           # 12 Jinja2 templates (base, projects, detail, frames_browse, label, train, monitor, etc.)
@@ -62,7 +62,7 @@ No ORM relationships are declared. All joins are explicit `db.query().filter()` 
 Key columns worth knowing:
 - `Project.sampling_active` / `inference_active` — persisted intended state (not used for auto-restart)
 - `Project.last_inference_at` — updated per frame during inference
-- `Project.last_inferred_frame_id` — tracks the latest frame processed by inference (including zero-detection frames); used by `/inference/latest` and `/inference/recent` endpoints; cleared on inference start so the UI resets
+- `Project.last_inferred_frame_id` — tracks the latest persisted inference sample (`Frame.source="inference"`); used by `/inference/recent` and initial dashboard recent section; cleared on inference start so the UI resets
 - `Detection.detected_at` — explicit `datetime.utcnow()`
 - `Project.auto_sample_interval_seconds` / `low_confidence_threshold` / `high_confidence_threshold` — per-project inference sampling settings (defaults 600 / 0.3 / 0.7), editable via the project edit form
 - `ReviewQueue.reason` — `"auto_sample"` or `"uncertain_confidence:0.45"` etc.
@@ -81,19 +81,20 @@ Key columns worth knowing:
 3. Save to `data/projects/{id}/frames/{timestamp}.jpg`
 4. Insert `Frame` row (`source="sampler"`), sleep `sample_interval_seconds`
 
-**Inference loop** (`inference.py`) — runs detections on a live stream and selectively samples frames:
+**Inference loop** (`inference.py`) — runs detections on a live stream, keeps a temporary live frame, and selectively persists samples:
 1. Load deployed YOLO model (cached, reloaded on version change)
 2. Capture a frame from the YouTube stream (same yt-dlp/ffmpeg mechanism; stream URL cached, re-resolved on failure)
-3. Save frame to disk, insert `Frame` row (`source="inference"`)
+3. Save captured frame to a temporary live path (`data/projects/{id}/live/...jpg`) and update in-memory live snapshot in `WorkerManager`
 4. Run model via `run_in_executor` (thread pool) with `conf=YOLO_INFERENCE_CONF` (default 0.1)
-5. Write `Detection` rows, update `project.last_inferred_frame_id`
-6. Sample frame for labeling (add to `ReviewQueue`) if either condition is met:
+5. Persist frame for labeling only when either condition is met:
    - Any detection confidence in [low_threshold, high_threshold] — the uncertain range worth human review (detections below low_threshold are treated as noise)
    - Time since last sample ≥ `auto_sample_interval_seconds`
    - Thresholds are per-project (configurable in project edit form), with config.py defaults as fallback
-7. Sleep `inference_interval_seconds`
+6. If sampled: copy live image into `data/projects/{id}/frames/...`, insert `Frame(source="inference")`, write `Detection` rows, enqueue `ReviewQueue`, update `project.last_inferred_frame_id`
+7. Update `project.last_inference_at` on each successful live tick, then sleep `inference_interval_seconds`
+8. Delete old temporary live image when replaced / on shutdown
 
-Sampling and inference are independent — either can run without the other. Both create `Frame` rows from the YouTube stream. The `Frame.source` column distinguishes their origin.
+Sampling and inference are independent — either can run without the other. Sampling always creates `Frame` rows; inference creates `Frame` rows only for selected samples. The `Frame.source` column distinguishes their origin.
 
 The labeling UI prioritizes ReviewQueue items first, then falls back to unlabeled `source="sampler"` frames. Inference frames only reach the labeling pipeline when explicitly sampled via the ReviewQueue.
 
@@ -108,7 +109,7 @@ Triggered from `/projects/{id}/train/start`:
 4. On success: create `ModelVersion` with weights path + metrics JSON
 5. User deploys via POST to `/model_versions/{id}/deploy` (deactivates previous)
 
-Training is a fire-and-forget `asyncio.create_task` — no reference stored, no cancellation support.
+Training is a fire-and-forget `asyncio.create_task` — no reference stored, no cancellation support. If training fails, it will be marked as failed the next time the app is started.
 
 Fine-tuning defaults (in `config_json`): `epochs=100`, `freeze=10` (backbone layers frozen to prevent catastrophic forgetting), `lr0=0.001`, `patience=20` (early stopping). YOLO `verbose=True` so per-epoch output is captured in the log.
 
@@ -118,14 +119,14 @@ Fine-tuning defaults (in `config_json`): `epochs=100`, `freeze=10` (backbone lay
 
 `project_detail.html` contains inline JS that:
 1. Polls `GET /projects/{id}/inference/latest` at `inference_interval_seconds` intervals
-2. Draws frame image + detection bounding boxes on an HTML5 canvas
-3. Only redraws when `frame.id` changes (dedup via `currentFrameId`)
+2. Draws temporary live frame image (`frame.image_url`, served by `GET /projects/{id}/inference/live_image`) + detection bounding boxes on an HTML5 canvas
+3. Only redraws when `frame.tick_id` changes (dedup via `currentFrameId`)
 4. Resets to empty state when `inference_running` is false or no frame available
-5. On new frame: also fetches `GET /projects/{id}/inference/recent` and rebuilds the recent results grid
+5. On new frame: also fetches `GET /projects/{id}/inference/recent` and rebuilds the recent sampled-results grid
 
 The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object for consistent pill/box coloring.
 
-## Route map (25 routes)
+## Route map (26 routes)
 
 | Method | Path | Purpose |
 |--------|------|---------|
@@ -136,7 +137,8 @@ The `class_color_map` (from DB `Class.color`) is passed to JS as a JSON object f
 | GET/POST | `/projects/{id}/edit` | Edit project |
 | POST | `/projects/{id}/sampling/start\|stop` | Control sampling worker |
 | POST | `/projects/{id}/inference/start\|stop` | Control inference worker |
-| GET | `/projects/{id}/inference/latest` | JSON: latest inferred frame + detections |
+| GET | `/projects/{id}/inference/latest` | JSON: latest temporary live inference frame + detections |
+| GET | `/projects/{id}/inference/live_image` | Serve latest temporary live inference JPEG |
 | GET | `/projects/{id}/inference/recent` | JSON: last 10 inferred frames |
 | GET | `/frames/{id}/image` | Serve frame JPEG |
 | GET | `/projects/{id}/label[/{frame_id}]` | Annotation UI |

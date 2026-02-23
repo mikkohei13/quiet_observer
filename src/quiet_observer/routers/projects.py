@@ -1,11 +1,11 @@
 import subprocess
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from ..config import TEMPLATES_DIR
+from ..config import DATA_DIR, TEMPLATES_DIR
 from ..database import get_db
 from ..models import Project
 from ..workers.manager import worker_manager
@@ -152,6 +152,7 @@ async def project_detail(request: Request, project_id: int, db: Session = Depend
             db.query(Frame)
             .filter(
                 Frame.project_id == project_id,
+                Frame.source == "inference",
                 Frame.id <= project.last_inferred_frame_id,
             )
             .order_by(Frame.id.desc())
@@ -343,6 +344,7 @@ async def start_inference(project_id: int, db: Session = Depends(get_db)):
     project.last_inference_at = None
     project.inference_active = True
     db.commit()
+    worker_manager.set_latest_inference_live(project_id, None)
 
     await worker_manager.start_inference(project_id, db)
 
@@ -366,12 +368,7 @@ async def stop_inference(project_id: int, db: Session = Depends(get_db)):
 
 @router.get("/projects/{project_id}/inference/latest")
 async def inference_latest(project_id: int, db: Session = Depends(get_db)):
-    """Return the most recently inferred frame with its detections as JSON.
-
-    Uses project.last_inferred_frame_id so the endpoint returns the latest
-    processed frame even when it had zero detections.
-    """
-    from ..models import Detection, Frame
+    """Return the most recently inferred live frame with detections as JSON."""
 
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
@@ -382,35 +379,39 @@ async def inference_latest(project_id: int, db: Session = Depends(get_db)):
     if not inference_running:
         return JSONResponse({"frame": None, "detections": [], "inference_running": False})
 
-    frame = None
-    if project.last_inferred_frame_id:
-        frame = db.query(Frame).filter(Frame.id == project.last_inferred_frame_id).first()
-
-    if not frame:
+    snap = worker_manager.get_latest_inference_live(project_id)
+    if not snap:
         return JSONResponse({"frame": None, "detections": [], "inference_running": inference_running})
-
-    detections = db.query(Detection).filter(Detection.frame_id == frame.id).all()
 
     return JSONResponse({
         "frame": {
-            "id": frame.id,
-            "captured_at": frame.captured_at.isoformat(),
-            "width": frame.width,
-            "height": frame.height,
+            "tick_id": snap["tick_id"],
+            "captured_at": snap["captured_at"],
+            "width": snap.get("width"),
+            "height": snap.get("height"),
+            "image_url": f"/projects/{project_id}/inference/live_image?t={snap['tick_id']}",
         },
-        "detections": [
-            {
-                "class_name": d.class_name,
-                "confidence": round(d.confidence, 3),
-                "x": d.x,
-                "y": d.y,
-                "width": d.width,
-                "height": d.height,
-            }
-            for d in detections
-        ],
+        "detections": snap["detections"],
         "inference_running": inference_running,
     })
+
+
+@router.get("/projects/{project_id}/inference/live_image")
+async def inference_live_image(project_id: int, db: Session = Depends(get_db)):
+    """Serve the latest temporary live inference frame image for a project."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    snap = worker_manager.get_latest_inference_live(project_id)
+    if not snap:
+        raise HTTPException(status_code=404, detail="No live frame available")
+
+    file_path = DATA_DIR / snap["file_path"]
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Live frame image not found")
+
+    return FileResponse(str(file_path), media_type="image/jpeg")
 
 
 @router.get("/projects/{project_id}/inference/recent")
@@ -429,6 +430,7 @@ async def inference_recent(project_id: int, db: Session = Depends(get_db)):
         db.query(Frame)
         .filter(
             Frame.project_id == project_id,
+            Frame.source == "inference",
             Frame.id <= project.last_inferred_frame_id,
         )
         .order_by(Frame.id.desc())

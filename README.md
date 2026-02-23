@@ -41,7 +41,7 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 
 ## Potential future improvements
 
-- Change detection frame selection: Implement ChangeDetectionStrategy and plug into capture loop
+- Add max samples per hour, or implement change detection frame selection: Implement ChangeDetectionStrategy
 - Better dataset management: add train/val split control and “hard negatives”
 - Model export: ONNX export for faster CPU inference if needed
 - Smarter active learning: embedding-based novelty sampling, disagreement sampling (champion/challenger)
