@@ -10,6 +10,7 @@ from pathlib import Path
 from ..config import (
     AUTO_SAMPLE_INTERVAL_SECONDS,
     DATA_DIR,
+    DETECTION_SUPPRESSION_IOU_THRESHOLD,
     HIGH_CONFIDENCE_SAMPLE_THRESHOLD,
     LOW_CONFIDENCE_SAMPLE_THRESHOLD,
     YOLO_INFERENCE_CONF,
@@ -23,6 +24,56 @@ from .capture import resolve_stream_url, capture_frame, get_image_dimensions
 from .manager import worker_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _xywh_to_xyxy(box: dict) -> tuple[float, float, float, float]:
+    """Convert normalized center box format to corner format."""
+    half_w = box["width"] / 2
+    half_h = box["height"] / 2
+    x1 = box["x"] - half_w
+    y1 = box["y"] - half_h
+    x2 = box["x"] + half_w
+    y2 = box["y"] + half_h
+    return x1, y1, x2, y2
+
+
+def _iou_xywh(first: dict, second: dict) -> float:
+    """Compute IoU between two normalized boxes in x,y,width,height format."""
+    ax1, ay1, ax2, ay2 = _xywh_to_xyxy(first)
+    bx1, by1, bx2, by2 = _xywh_to_xyxy(second)
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter_area
+    if union <= 0:
+        return 0.0
+    return inter_area / union
+
+
+def _suppress_overlapping_detections(
+    detections: list[dict], iou_threshold: float = DETECTION_SUPPRESSION_IOU_THRESHOLD
+) -> list[dict]:
+    """Keep highest-confidence detection when boxes overlap heavily."""
+    if len(detections) <= 1:
+        return detections
+
+    sorted_detections = sorted(
+        detections, key=lambda det: det["confidence"], reverse=True
+    )
+    kept: list[dict] = []
+    for candidate in sorted_detections:
+        if all(_iou_xywh(candidate, existing) <= iou_threshold for existing in kept):
+            kept.append(candidate)
+    return kept
 
 
 def _run_model_sync(model, frame_path_str: str):
@@ -67,7 +118,7 @@ async def run_inference_on_frame(frame_path: Path, model) -> list[dict]:
                         "height": bh,
                     })
 
-        return detections
+        return _suppress_overlapping_detections(detections)
 
     except Exception as e:
         logger.exception("Inference error on frame path %s: %s", frame_path, e)

@@ -15,6 +15,10 @@ YOLO_BASE_MODEL = "yolo11n.pt"
 # YOLO prediction confidence threshold (detections below this are discarded)
 YOLO_INFERENCE_CONF = 0.1
 
+# During inference post-processing, suppress lower-confidence detections that
+# overlap with higher-confidence detections above this IoU value.
+DETECTION_SUPPRESSION_IOU_THRESHOLD = 0.9
+
 # During inference, sample a frame for labeling every N seconds
 AUTO_SAMPLE_INTERVAL_SECONDS = 600
 

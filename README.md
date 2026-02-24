@@ -41,6 +41,7 @@ All frames, model weights, and logs are stored under `data/` (gitignored).
 
 ## Potential future improvements
 
+- Labelling helper that draws boxes around objects by comparing to previous frames
 - Dark mode
 - Make navigation more consistent
 - Redesign monitor page
